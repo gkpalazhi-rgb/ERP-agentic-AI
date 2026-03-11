@@ -11,6 +11,8 @@ from app.models.erp_logs import ERPAPILog
 from app.models.inventory import Inventory
 from app.models.purchase_order import PurchaseOrder
 from app.models.vendor import Vendor
+from app.models.leave_application import LeaveApplication
+from app.models.user import User
 
 from app.services.execution_engine import execute_plan
 from app.services.agent import generate_plan
@@ -26,8 +28,53 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Create tables automatically (only creates tables that don't already exist)
+# Create tables automatically
 Base.metadata.create_all(bind=engine)
+
+# Migrate: add missing columns to existing tables
+from sqlalchemy import text, inspect as sa_inspect
+
+def run_migrations():
+    inspector = sa_inspect(engine)
+    with engine.connect() as conn:
+        # Add 'status' to purchase_orders if missing
+        if 'purchase_orders' in inspector.get_table_names():
+            existing_cols = [c['name'] for c in inspector.get_columns('purchase_orders')]
+            if 'status' not in existing_cols:
+                conn.execute(text("ALTER TABLE purchase_orders ADD COLUMN status VARCHAR DEFAULT 'Pending'"))
+                conn.commit()
+                print("Migration: added 'status' to purchase_orders")
+
+        # Add 'username' to leave_applications if missing
+        if 'leave_applications' in inspector.get_table_names():
+            existing_cols = [c['name'] for c in inspector.get_columns('leave_applications')]
+            if 'username' not in existing_cols:
+                conn.execute(text("ALTER TABLE leave_applications ADD COLUMN username VARCHAR"))
+                conn.commit()
+                print("Migration: added 'username' to leave_applications")
+
+try:
+    run_migrations()
+except Exception as e:
+    print(f"Migration warning: {e}")
+
+# Seed initial data
+def seed_data():
+    db = SessionLocal()
+    try:
+        # Check if admin user exists
+        admin = db.query(User).filter(User.id == 1).first()
+        if not admin:
+            admin = User(id=1, username="admin", role="admin")
+            db.add(admin)
+            db.commit()
+            print("Admin user seeded.")
+    except Exception as e:
+        print(f"Seeding error: {e}")
+    finally:
+        db.close()
+
+seed_data()
 
 
 # -------------------------------
@@ -89,7 +136,7 @@ def chat(user_id: int, message: str, session_id: Optional[str] = None, db: Sessi
 
         elif plan.get("type") == "action" or "steps" in plan:
             # ERP tool execution
-            response = execute_plan(plan, db)
+            response = execute_plan(plan, db, user_id=user_id)
 
             # Log the ERP execution
             log = ERPAPILog(

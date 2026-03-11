@@ -3,7 +3,7 @@ from app.services.tool_registry import TOOL_REGISTRY
 from app.models.erp_logs import ERPAPILog
 
 
-def execute_plan(plan: dict, db):
+def execute_plan(plan: dict, db, user_id: int = 1):
 
     if not isinstance(plan, dict) or "steps" not in plan:
         return "Invalid execution plan."
@@ -43,7 +43,10 @@ def execute_plan(plan: dict, db):
                     else:
                         formatted_args[key] = val
 
-                # PASS DB INTO TOOL
+                # PASS DB AND USER_ID INTO TOOL
+                if "user_id" not in formatted_args:
+                    formatted_args["user_id"] = user_id
+
                 result = tool_function(db=db, **formatted_args)
 
                 last_result = result
@@ -138,6 +141,12 @@ def execute_plan(plan: dict, db):
 
         if "vendor_id" in last_result:
             return f"Vendor added successfully with ID {last_result['vendor_id']}."
+
+        if last_result.get("status") == "Stock Updated":
+            return last_result.get("message", f"Updated inventory for {last_result.get('item')}.")
+
+        if "leave_id" in last_result:
+            return f"Leave application submitted successfully (ID: {last_result['leave_id']}) for {last_result['date']} ({last_result['type']})."
 
         if "quantity" in last_result and "item" in last_result:
             if last_result.get("message"):

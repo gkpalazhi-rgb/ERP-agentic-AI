@@ -60,7 +60,9 @@ def fallback_planner(user_message: str, chat_history: str = ""):
         "create", "check", "less", "than", "billing", "bill",
         "receipt", "quantity", "amount", "price", "total",
         "supplier", "restock", "reorder", "supply", "buy", "procure",
-        "many", "left", "supplies", "who", "arishtam", "capsule", "dropper"
+        "many", "left", "supplies", "who", "arishtam", "capsule", "dropper",
+        "leave", "apply", "application", "reason", "day", "half", "full",
+        "arrived", "received", "delivered", "stock", "add", "increase"
     ]
 
     for word in re.findall(r'\b\w+\b', user_msg):
@@ -142,6 +144,52 @@ def fallback_planner(user_message: str, chat_history: str = ""):
 
         return {"type": "action", "steps": steps}
 
+    # --- Leave Applications ---
+    if "leave" in user_msg or "apply" in user_msg:
+        # Simple extraction for fallback
+        reason = "No reason provided"
+        if "reason" in user_msg:
+            r_match = re.search(r'reason\s+(?:is|for)?\s*(.*?)(?:\s+on|\s+at|$)', user_msg)
+            if r_match: reason = r_match.group(1).strip()
+        
+        leave_type = "Full Day"
+        if "half" in user_msg:
+            if "1st" in user_msg or "first" in user_msg: leave_type = "1st Half"
+            elif "2nd" in user_msg or "second" in user_msg: leave_type = "2nd Half"
+            else: leave_type = "1st Half" # Default half
+            
+        date_str = datetime.now().strftime("%Y-%m-%d") # Default to today
+        if "tomorrow" in user_msg:
+            from datetime import timedelta
+            date_str = (datetime.now() + timedelta(days=1)).strftime("%Y-%m-%d")
+
+        return {
+            "type": "action",
+            "steps": [{
+                "type": "tool",
+                "name": "apply_leave",
+                "args": {"reason": reason, "leave_date": date_str, "leave_type": leave_type}
+            }]
+        }
+
+    # --- Stock Arrival / Received ---
+    if "arrived" in user_msg or "received" in user_msg or "delivered" in user_msg:
+        qty_match = re.search(r"\d+", user_msg)
+        quantity = int(qty_match.group()) if qty_match else 0
+        item = extract_item_from_message(user_msg, msg)
+        po_match = re.search(r'(?:po|order)\s+#?(\d+)', user_msg)
+        po_id = int(po_match.group(1)) if po_match else None
+        
+        if quantity > 0:
+            return {
+                "type": "action",
+                "steps": [{
+                    "type": "tool",
+                    "name": "update_inventory_stock",
+                    "args": {"item": item, "quantity": quantity, "po_id": po_id}
+                }]
+            }
+
     # --- Inventory check ---
     if "inventory" in user_msg or "stock" in user_msg or "check" in user_msg or "have" in user_msg or "many" in user_msg or "left" in user_msg:
         item = extract_item_from_message(user_msg, msg)
@@ -185,6 +233,8 @@ def extract_item_from_message(user_msg: str, full_msg: str, before_keyword: str 
 def generate_plan(user_message: str, chat_history: str = ""):
 
     tools_description = build_tool_prompt()
+    from datetime import datetime
+    today = datetime.now().strftime("%Y-%m-%d (%A)")
 
     system_prompt = f"""You are an ERP AI assistant for Thaikkattu Mooss Vaidyaratnam (Ayurvedic company). You handle conversation and ERP tasks.
 
@@ -205,8 +255,12 @@ User: "what can you do" -> {{"type": "conversation", "response": "I can check in
 User: "check inventory for amber bottle" -> {{"type": "action", "steps": [{{"type": "tool", "name": "get_inventory", "args": {{"item": "amber bottle"}}}}]}}
 User: "create PO for 50 bottles" -> {{"type": "action", "steps": [{{"type": "tool", "name": "create_purchase_order", "args": {{"item": "bottles", "quantity": 50}}}}]}}
 User: "generate invoice for PO 3" -> {{"type": "action", "steps": [{{"type": "tool", "name": "generate_purchase_invoice", "args": {{"po_id": 3}}}}]}}
+User: "I want to apply for leave tomorrow because I'm sick. Full day." -> {{"type": "action", "steps": [{{"type": "tool", "name": "apply_leave", "args": {{"reason": "sick", "leave_date": "2026-03-13", "leave_type": "Full Day"}}}}]}}
+User: "PO of 20 arishtam has arrived" -> {{"type": "action", "steps": [{{"type": "tool", "name": "update_inventory_stock", "args": {{"item": "arishtam", "quantity": 20}}}}]}}
+User: "received 50 amber bottles for PO 5" -> {{"type": "action", "steps": [{{"type": "tool", "name": "update_inventory_stock", "args": {{"item": "amber bottles", "quantity": 50, "po_id": 5}}}}]}}
 
 Chat history: {chat_history if chat_history else "None"}
+Current Date: {today}
 Handle typos. Return ONLY JSON. Keep responses SHORT."""
 
     payload = {

@@ -9,4 +9,5 @@ class PurchaseOrder(Base):
     item_name = Column(String)
     quantity = Column(Integer)
     vendor = Column(String)
+    status = Column(String, default="Pending")
     created_at = Column(DateTime, default=datetime.utcnow)

@@ -1,11 +1,14 @@
 from app.models.inventory import Inventory
 from app.models.purchase_order import PurchaseOrder
 from app.models.vendor import Vendor
+from app.models.leave_application import LeaveApplication
+from app.models.user import User
 import os
+from datetime import datetime
 
 
 # Check inventory
-def get_inventory(item: str, db):
+def get_inventory(item: str, db, user_id: int = 1):
 
     # Split item phrase into words to search individually or together
     words = item.lower().split()
@@ -28,8 +31,6 @@ def get_inventory(item: str, db):
         }
 
     # If multiple products match, we can sum them or list them. 
-    # The requirement is just to return them. Let's return the first one's format, 
-    # but aggregate the message if there are multiple.
     if len(products) == 1:
         return {
             "item": products[0].item_name,
@@ -47,7 +48,7 @@ def get_inventory(item: str, db):
     }
 
 # Create purchase order
-def create_purchase_order(item: str, quantity: int, db, vendor_name: str = "default_vendor"):
+def create_purchase_order(item: str, quantity: int, db, vendor_name: str = "default_vendor", user_id: int = 1):
 
     purchase_order = PurchaseOrder(
         item_name=item.lower(),
@@ -69,7 +70,7 @@ def create_purchase_order(item: str, quantity: int, db, vendor_name: str = "defa
 
 
 # Add vendor
-def add_vendor(vendor_name: str, item_name: str, price: float, db):
+def add_vendor(vendor_name: str, item_name: str, price: float, db, user_id: int = 1):
 
     vendor = Vendor(
         vendor_name=vendor_name,
@@ -88,7 +89,7 @@ def add_vendor(vendor_name: str, item_name: str, price: float, db):
 
 
 # Get vendor list
-def get_vendors(db):
+def get_vendors(db, user_id: int = 1):
 
     vendors = db.query(Vendor).all()
 
@@ -104,7 +105,7 @@ def get_vendors(db):
 
 
 # Get PO status
-def get_po_status(po_id: int, db):
+def get_po_status(po_id: int, db, user_id: int = 1):
     po = db.query(PurchaseOrder).filter(PurchaseOrder.id == po_id).first()
     
     if not po:
@@ -121,7 +122,7 @@ def get_po_status(po_id: int, db):
 
     return {
         "po_id": po.id,
-        "status": "Processing",
+        "status": po.status,
         "item": po.item_name,
         "quantity": po.quantity,
         "vendor": po.vendor,
@@ -131,8 +132,8 @@ def get_po_status(po_id: int, db):
 
 
 # Generate Purchase Invoice
-def generate_purchase_invoice(po_id: int, db):
-    po_details = get_po_status(po_id, db)
+def generate_purchase_invoice(po_id: int, db, user_id: int = 1):
+    po_details = get_po_status(po_id, db, user_id=user_id)
     
     if "error" in po_details:
         return {"error": po_details["error"]}
@@ -166,3 +167,93 @@ Authorized by: ERP AI Agent
         "filename": filename,
         "po_id": po_id
     }
+
+# Apply for leave
+def apply_leave(reason: str, leave_date: str, leave_type: str, db, user_id: int = 1):
+    try:
+        try:
+            parsed_date = datetime.strptime(leave_date, "%Y-%m-%d").date()
+        except ValueError:
+            parsed_date = datetime.now().date()
+        
+        # Normalize leave type
+        lt = leave_type.lower()
+        if "1st" in lt or "first" in lt: leave_type = "1st Half"
+        elif "2nd" in lt or "second" in lt: leave_type = "2nd Half"
+        else: leave_type = "Full Day"
+        
+        # Fetch username from users table
+        user = db.query(User).filter(User.id == user_id).first()
+        username = user.username if user else f"User_{user_id}"
+
+        leave_app = LeaveApplication(
+            user_id=user_id, 
+            username=username, 
+            reason=reason, 
+            leave_date=parsed_date, 
+            leave_type=leave_type
+        )
+        db.add(leave_app)
+        db.commit()
+        db.refresh(leave_app)
+        return {"status": "Leave Applied", "leave_id": leave_app.id, "date": str(leave_app.leave_date), "type": leave_app.leave_type}
+    except Exception as e:
+        return {"error": str(e)}
+
+# Update inventory when goods arrive
+def update_inventory_stock(item: str, quantity: int, db, po_id: int = None, user_id: int = 1):
+    """
+    Increments inventory quantity for an item. 
+    Cross-references with purchase_orders to prevent 'fake' stock additions.
+    """
+    try:
+        item_lower = item.lower()
+        po = None
+        
+        # 1. CROSS-REFERENCE LOGIC
+        if po_id:
+            # Strict match: Check the specific PO
+            po = db.query(PurchaseOrder).filter(PurchaseOrder.id == po_id).first()
+            if not po:
+                return {"error": f"Security Alert: Purchase Order #{po_id} does not exist. Stock arrival rejected."}
+            if po.status == "Delivered":
+                return {"error": f"Security Alert: Stock for PO #{po_id} has already been received. Data duplication prevented."}
+            # Verify item matches (allow loose matching)
+            if item_lower not in po.item_name.lower() and po.item_name.lower() not in item_lower:
+                return {"error": f"Data Mismatch: PO #{po_id} is for '{po.item_name}', but you reported '{item}'. Verification failed."}
+        else:
+            # Optional: Try to find a matching pending PO if none specified
+            po = db.query(PurchaseOrder).filter(
+                PurchaseOrder.item_name.ilike(f"%{item_lower}%"),
+                PurchaseOrder.status == "Pending"
+            ).first()
+            
+            if not po:
+                return {"error": f"No pending Purchase Order found for '{item}'. Please provide a PO ID to verify this stock arrival."}
+
+        # 2. UPDATE INVENTORY
+        product = db.query(Inventory).filter(Inventory.item_name.ilike(f"%{item_lower}%")).first()
+
+        if product:
+            product.quantity += quantity
+            action = "updated"
+        else:
+            product = Inventory(item_name=item_lower, quantity=quantity, item_code=f"GEN-{item_lower[:3].upper()}", category="General")
+            db.add(product)
+            action = "created"
+            
+        # 3. MARK PO AS DELIVERED
+        po.status = "Delivered"
+
+        db.commit()
+        db.refresh(product)
+
+        return {
+            "status": "Stock Updated",
+            "item": product.item_name,
+            "added_quantity": quantity,
+            "new_total": product.quantity,
+            "message": f"Verified against PO #{po.id}. Inventory for {product.item_name} {action}. Total now: {product.quantity}. PO status marked as Delivered."
+        }
+    except Exception as e:
+        return {"error": f"Verification failed: {str(e)}"}
