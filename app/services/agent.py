@@ -47,275 +47,250 @@ def extract_json(text):
 
 def fallback_planner(user_message: str, chat_history: str = ""):
     """
-    Rule based backup planner if LLM fails
+    Simplified rule-based backup planner if LLM fails.
+    Only handles clear ERP intents. Casual conversation is left to the LLM.
     """
 
     user_msg = user_message.lower()
 
-    # Dynamically fix typos using Python's built-in difflib fuzzy matching
+    # Fuzzy-correct typos against known ERP terms
     core_keywords = [
-        "invoice", "purchase", "order", "status", "cost", "vendor", 
-        "inventory", "stock", "bottle", "amber", "glass", "generate", 
-        "create", "check", "less", "than", "billing", "bill", 
-        "receipt", "quantity", "amount", "price", "total", 
+        "invoice", "purchase", "order", "status", "cost", "vendor",
+        "inventory", "stock", "bottle", "amber", "glass", "generate",
+        "create", "check", "less", "than", "billing", "bill",
+        "receipt", "quantity", "amount", "price", "total",
         "supplier", "restock", "reorder", "supply", "buy", "procure",
-        "many", "left", "supplies", "who"
+        "many", "left", "supplies", "who", "arishtam", "capsule", "dropper"
     ]
-    
-    # Extract all words and fuzzy match longer ones to securely avoid breaking small terms like 'po' or 'if'
+
     for word in re.findall(r'\b\w+\b', user_msg):
         if len(word) >= 4:
             matches = difflib.get_close_matches(word, core_keywords, n=1, cutoff=0.8)
             if matches and matches[0] != word:
-                # Replace the exact word bounds so we don't accidentally replace subsets
                 user_msg = re.sub(r'\b' + word + r'\b', matches[0], user_msg)
 
-    # Fuse previous chat history context securely into the regex engine to handle pronouns natively
     msg = f"{chat_history} {user_msg}".lower()
 
-    if ("invoice" in user_msg) and "create" not in user_msg and "purchase" not in user_msg:
-        try:
-            po_match = re.search(r'(?:for\s+(?:po|order)\s+)?#?(\d+)', user_msg)
-            if po_match:
-                return {
-                    "steps": [
-                        {
-                            "type": "tool",
-                            "name": "generate_purchase_invoice",
-                            "args": {"po_id": int(po_match.group(1))}
-                        }
-                    ]
-                }
-        except:
-            pass
-            
-    if ("status" in user_msg or "cost" in user_msg) and ("po" in user_msg or "order" in user_msg):
-        try:
-            po_match = re.search(r'(?:of\s+(?:po|order)\s+)?#?(\d+)', user_msg)
-            if po_match:
-                return {
-                    "steps": [
-                        {
-                            "type": "tool",
-                            "name": "get_po_status",
-                            "args": {"po_id": int(po_match.group(1))}
-                        }
-                    ]
-                }
-        except:
-            pass
+    # --- Invoice generation ---
+    if ("invoice" in user_msg or "bill" in user_msg or "receipt" in user_msg) and "create" not in user_msg and "purchase" not in user_msg:
+        po_match = re.search(r'(?:for\s+(?:po|order)\s+)?#?(\d+)', user_msg)
+        if po_match:
+            return {
+                "type": "action",
+                "steps": [{
+                    "type": "tool",
+                    "name": "generate_purchase_invoice",
+                    "args": {"po_id": int(po_match.group(1))}
+                }]
+            }
 
+    # --- PO status ---
+    if ("status" in user_msg or "cost" in user_msg or "track" in user_msg) and ("po" in user_msg or "order" in user_msg):
+        po_match = re.search(r'(?:of\s+(?:po|order)\s+)?#?(\d+)', user_msg)
+        if po_match:
+            return {
+                "type": "action",
+                "steps": [{
+                    "type": "tool",
+                    "name": "get_po_status",
+                    "args": {"po_id": int(po_match.group(1))}
+                }]
+            }
+
+    # --- Conditional PO (if less than X, create order) ---
     if "if" in user_msg and ("less than" in user_msg or "<" in user_msg) and ("purchase" in user_msg or "order" in user_msg or "po" in user_msg):
         try:
-            # Extract condition threshold e.g. "less than 10"
             cond_match = re.search(r'(?:less than|<)\s*(\d+)', user_msg)
             threshold = int(cond_match.group(1)) if cond_match else 10
-            
-            # Extract PO details
+
             po_qty_match = re.search(r'(?:purchase|order|po).*?(\d+)', msg)
             po_qty = int(po_qty_match.group(1)) if po_qty_match else 50
-            
-            # Extract vendor if applicable
+
             v_match = re.search(r'from vendor\s+([a-zA-Z0-9_]+)', msg)
             vendor = f"vendor {v_match.group(1)}" if v_match else "default_vendor"
-            
-            # Extract item by looking between 'for' and 'if'
-            item_match = re.search(r'(?:for|of)\s+([a-zA-Z0-9\s]+?)\s+if', msg)
-            if item_match:
-                item = item_match.group(1).strip()
-            else:
-                item_match = re.search(r'if (.*?)\s+(?:is |are |quantity |stock )?(?:less than|<)', msg)
-                item = item_match.group(1).strip() if item_match else "glass bottle"
-            
+
+            item = extract_item_from_message(user_msg, msg, before_keyword="if")
+
             return {
+                "type": "action",
                 "steps": [
-                    {
-                        "type": "tool",
-                        "name": "get_inventory",
-                        "args": {"item": item}
-                    },
-                    {
-                        "type": "condition",
-                        "left": "last.quantity",
-                        "operator": "<",
-                        "right": threshold
-                    },
-                    {
-                        "type": "tool",
-                        "name": "create_purchase_order",
-                        "args": {
-                            "item": item,
-                            "quantity": po_qty,
-                            "vendor_name": vendor
-                        }
-                    }
+                    {"type": "tool", "name": "get_inventory", "args": {"item": item}},
+                    {"type": "condition", "left": "last.quantity", "operator": "<", "right": threshold},
+                    {"type": "tool", "name": "create_purchase_order", "args": {"item": item, "quantity": po_qty, "vendor_name": vendor}}
                 ]
             }
         except Exception:
             pass
 
+    # --- Vendors ---
     if "vendor" in user_msg or "supplies" in user_msg or "who" in user_msg or "supplier" in user_msg:
         return {
-            "steps": [
-                {
-                    "type": "tool",
-                    "name": "get_vendors",
-                    "args": {}
-                }
-            ]
+            "type": "action",
+            "steps": [{"type": "tool", "name": "get_vendors", "args": {}}]
         }
 
-    if "purchase" in user_msg or "order" in user_msg or "po" in user_msg or "buy" in user_msg:
-
+    # --- Purchase order creation ---
+    if "purchase" in user_msg or "order" in user_msg or "po" in user_msg or "buy" in user_msg or "procure" in user_msg:
         qty_match = re.search(r"\d+", user_msg)
         quantity = int(qty_match.group()) if qty_match else 1
+        item = extract_item_from_message(user_msg, msg)
 
-        item = "item"
-        if "amber bottle" in user_msg.replace("bottles", "bottle"):
-            item = "amber bottle"
-        else:
-            item_match = re.search(r'(?:for|of)\s+([a-zA-Z0-9\s]+?)(?:\s+and)', user_msg)
-            if item_match and item_match.group(1).strip() not in ["them", "it"]:
-                item = item_match.group(1).strip()
-                # Clean up trailing words like 'produce' or 'generate'
-                item = re.sub(r'\s+(?:create|make|generate|produce|it).*$', '', item).strip()
-            elif re.search(r'(?:for|of)\s+(?:an?\s+)?(?:[0-9]+\s+)?([a-z0-9\s]+)', user_msg) and re.search(r'(?:for|of)\s+(?:an?\s+)?(?:[0-9]+\s+)?([a-z0-9\s]+)', user_msg).group(1).strip() not in ["them", "it"]:
-                item_match = re.search(r'(?:for|of)\s+(?:an?\s+)?(?:[0-9]+\s+)?([a-z0-9\s]+)', user_msg)
-                item = item_match.group(1).strip()
-            elif re.search(r'(?:for|of)\s+(?:an?\s+)?(?:[0-9]+\s+)?([a-z0-9\s]+)', msg):
-                item_match = re.search(r'(?:for|of)\s+(?:an?\s+)?(?:[0-9]+\s+)?([a-z0-9\s]+)', msg)
-                item = item_match.group(1).strip()
-                item = re.sub(r'\\n.*', '', item).strip()
-                item = item.replace('agent', '').strip()
-            else:
-                for keyword in ["laptop", "mouse", "keyboard", "arishtam", "kashayam", "choornam", "bottle"]:
-                    if keyword in msg:
-                        item = keyword
-                        break
+        steps = [{"type": "tool", "name": "create_purchase_order", "args": {"item": item, "quantity": quantity}}]
 
-        steps = [
-            {
-                "type": "tool",
-                "name": "create_purchase_order",
-                "args": {
-                    "item": item,
-                    "quantity": quantity
-                }
-            }
-        ]
+        if "invoice" in user_msg or "bill" in user_msg:
+            steps.append({"type": "tool", "name": "generate_purchase_invoice", "args": {"po_id": "{last.po_id}"}})
 
-        if "invoice" in user_msg:
-            steps.append({
-                "type": "tool",
-                "name": "generate_purchase_invoice",
-                "args": {"po_id": "{last.po_id}"}
-            })
+        return {"type": "action", "steps": steps}
 
-        return {
-            "steps": steps
-        }
-
-
+    # --- Inventory check ---
     if "inventory" in user_msg or "stock" in user_msg or "check" in user_msg or "have" in user_msg or "many" in user_msg or "left" in user_msg:
-
-        item = "item"
-        if "amber bottle" in user_msg.replace("bottles", "bottle"):
-            item = "amber bottle"
-        else:
-            item_match = re.search(r'(?:for|of)\s+(?:an?\s+)?(?:[0-9]+\s+)?([a-z0-9\s]+)', user_msg)
-            if item_match:
-                item = item_match.group(1).strip()
-            else:
-                for keyword in ["laptop", "mouse", "keyboard", "arishtam", "kashayam", "choornam", "bottle"]:
-                    if keyword in msg:
-                        item = keyword
-                        break
-
+        item = extract_item_from_message(user_msg, msg)
         return {
-            "steps": [
-                {
-                    "type": "tool",
-                    "name": "get_inventory",
-                    "args": {
-                        "item": item
-                    }
-                }
-            ]
+            "type": "action",
+            "steps": [{"type": "tool", "name": "get_inventory", "args": {"item": item}}]
         }
 
+    # No ERP intent detected — return None so the caller knows to use a generic LLM response
     return None
+
+
+def extract_item_from_message(user_msg: str, full_msg: str, before_keyword: str = None) -> str:
+    """
+    Helper to extract item names from user messages.
+    """
+    if before_keyword:
+        item_match = re.search(rf'(?:for|of)\s+([a-zA-Z0-9\s]+?)\s+{before_keyword}', full_msg)
+        if item_match:
+            return item_match.group(1).strip()
+
+    item_match = re.search(r'(?:for|of)\s+(?:an?\s+)?(?:\d+\s+)?([a-z0-9\s]+)', user_msg)
+    if item_match:
+        item = item_match.group(1).strip()
+        item = re.sub(r'\s+(?:create|make|generate|produce|and|it).*$', '', item).strip()
+        if item and item not in ["them", "it", "the"]:
+            return item
+
+    # Try from full message (includes chat history)
+    item_match = re.search(r'(?:for|of)\s+(?:an?\s+)?(?:\d+\s+)?([a-z0-9\s]+)', full_msg)
+    if item_match:
+        item = item_match.group(1).strip()
+        item = re.sub(r'\\n.*', '', item).strip()
+        item = item.replace('agent', '').strip()
+        if item and item not in ["them", "it", "the"]:
+            return item
+
+    return "item"
 
 
 def generate_plan(user_message: str, chat_history: str = ""):
 
     tools_description = build_tool_prompt()
 
-    system_prompt = f"""
-You are the primary ERP AI agent for Thaikkattu Mooss Vaidyaratnam, a prestigious Ayurvedic company.
-You are assisting the company's internal employees with their daily tasks. Be helpful and precise.
-CRITICAL: End users may make spelling mistakes or typos (e.g. "invice", "purchse", "chek"). You must intelligently infer their intent, correct the spelling, and supply the correct tool execution anyways.
+    system_prompt = f"""You are an ERP AI assistant for Thaikkattu Mooss Vaidyaratnam (Ayurvedic company). You handle conversation and ERP tasks.
 
-Available tools:
+ALWAYS return ONLY valid JSON in one of these two formats:
 
-{tools_description}
+For greetings/chat/questions: {{"type": "conversation", "response": "your friendly reply"}}
+For ERP tasks: {{"type": "action", "steps": [{{"type": "tool", "name": "TOOL", "args": {{}}}}]}}
 
-Here is the recent conversation history for memory context:
-{chat_history}
+Tools: {tools_description}
 
-You can also use condition logic to execute steps conditionally. A condition checks the result of the LAST executed tool step.
-Condition support operators: '==', '<', '>'
+Conditions can chain steps: {{"type": "condition", "left": "last.quantity", "operator": "<", "right": 10}}
 
-Format:
-{{
- "steps":[
-   {{
-     "type":"tool",
-     "name":"get_inventory",
-     "args":{{"item": "bottle"}}
-   }},
-   {{
-     "type":"condition",
-     "left":"last.quantity",
-     "operator":"<",
-     "right":10
-   }},
-   {{
-     "type":"tool",
-     "name":"create_purchase_order",
-     "args":{{"item": "bottle", "quantity": 50, "vendor_name": "vendor A"}}
-   }}
- ]
-}}
+Examples:
+User: "hey how are you" -> {{"type": "conversation", "response": "Hello! I'm doing well! I can help with inventory, orders, vendors, and invoices. What do you need?"}}
+User: "check inventory for amber bottle" -> {{"type": "action", "steps": [{{"type": "tool", "name": "get_inventory", "args": {{"item": "amber bottle"}}}}]}}
+User: "create PO for 50 bottles" -> {{"type": "action", "steps": [{{"type": "tool", "name": "create_purchase_order", "args": {{"item": "bottles", "quantity": 50}}}}]}}
+User: "generate invoice for PO 3" -> {{"type": "action", "steps": [{{"type": "tool", "name": "generate_purchase_invoice", "args": {{"po_id": 3}}}}]}}
 
-Return ONLY JSON strings, nothing else. Never talk outside of JSON.
-"""
+Chat history: {chat_history if chat_history else "None"}
+Handle typos. Return ONLY JSON."""
 
     payload = {
         "model": "llama3",
-        "prompt": system_prompt + "\nUser: " + user_message,
+        "prompt": system_prompt + "\nUser: " + user_message + "\nJSON:",
         "stream": False
     }
 
-    try:
+    # Try LLM up to 2 times
+    for attempt in range(2):
+        try:
+            response = requests.post(OLLAMA_URL, json=payload, timeout=120)
+            data = response.json()
 
-        response = requests.post(OLLAMA_URL, json=payload)
-        data = response.json()
+            result_text = data.get("response", "")
 
-        result_text = data.get("response", "")
+            print(f"\nLLM OUTPUT (attempt {attempt + 1}):\n", result_text)
 
-        print("\nLLM OUTPUT:\n", result_text)
+            plan = extract_json(result_text)
 
-        plan = extract_json(result_text)
+            if plan:
+                # Normalize: if old format {"steps": [...]}, convert to new format
+                if "steps" in plan and "type" not in plan:
+                    plan["type"] = "action"
+                return plan
 
-        if plan:
-            return plan
+            # If first attempt failed, retry with a much shorter prompt
+            if attempt == 0:
+                print("LLM returned invalid JSON. Retrying with shorter prompt...")
+                payload["prompt"] = (
+                    "Return ONLY a JSON object. No markdown, no explanation.\n"
+                    f"User said: \"{user_message}\"\n"
+                    "If greeting/casual talk: {\"type\": \"conversation\", \"response\": \"your friendly reply\"}\n"
+                    "If ERP task (inventory/order/vendor/invoice): {\"type\": \"action\", \"steps\": [{\"type\": \"tool\", \"name\": \"tool_name\", \"args\": {}}]}\n"
+                    "JSON:"
+                )
+                continue
 
-        print("LLM failed. Using fallback planner.")
+        except requests.exceptions.ConnectionError:
+            print("Ollama is not reachable.")
+            break
+        except requests.exceptions.Timeout:
+            print("Ollama request timed out. Trying lightweight conversation prompt...")
+            # On timeout, try once more with ultra-short prompt for conversation
+            try:
+                short_payload = {
+                    "model": "llama3",
+                    "prompt": (
+                        f"User says: \"{user_message}\"\n"
+                        "Reply as a friendly ERP assistant in JSON format:\n"
+                        "{\"type\": \"conversation\", \"response\": \"your reply\"}\n"
+                        "JSON:"
+                    ),
+                    "stream": False
+                }
+                resp2 = requests.post(OLLAMA_URL, json=short_payload, timeout=90)
+                data2 = resp2.json()
+                result2 = data2.get("response", "")
+                print("Short prompt LLM OUTPUT:", result2)
+                plan2 = extract_json(result2)
+                if plan2:
+                    return plan2
+            except:
+                pass
+            break
+        except Exception as e:
+            print("Planner error:", str(e))
+            break
 
-        return fallback_planner(user_message, chat_history)
+    # LLM failed — try keyword fallback
+    print("Using fallback planner.")
+    fallback_result = fallback_planner(user_message, chat_history)
 
-    except Exception as e:
+    if fallback_result:
+        return fallback_result
 
-        print("Planner error:", str(e))
-
-        return fallback_planner(user_message, chat_history)
+    # If even fallback doesn't match (likely casual chat) — return a generic friendly response
+    return {
+        "type": "conversation",
+        "response": (
+            "Hello! I'm your ERP assistant for Thaikkattu Mooss Vaidyaratnam. "
+            "I can help you with:\n"
+            "• Check inventory levels\n"
+            "• Create purchase orders\n"
+            "• View vendor lists\n"
+            "• Check PO status\n"
+            "• Generate invoices\n\n"
+            "How can I help you today?"
+        )
+    }
