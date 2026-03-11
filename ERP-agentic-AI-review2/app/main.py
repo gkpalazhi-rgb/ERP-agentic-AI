@@ -29,6 +29,22 @@ app.add_middleware(
 # Create tables automatically
 Base.metadata.create_all(bind=engine)
 
+def seed_inventory(db: Session):
+    if db.query(Inventory).count() == 0:
+        items = [
+            Inventory(item_name="Amber Bottle 100ml", category="Packaging", quantity=500),
+            Inventory(item_name="Amber Bottle 250ml", category="Packaging", quantity=300),
+            Inventory(item_name="Amber Bottle 500ml", category="Packaging", quantity=150),
+            Inventory(item_name="Glass Jar", category="Packaging", quantity=200),
+            Inventory(item_name="Plastic Bottle", category="Packaging", quantity=600),
+        ]
+        db.add_all(items)
+        db.commit()
+
+# Seed when starting (using a temporary session)
+with SessionLocal() as db:
+    seed_inventory(db)
+
 
 # -------------------------------
 # Database Dependency
@@ -76,6 +92,40 @@ def chat(user_id: int, message: str, session_id: Optional[str] = None, db: Sessi
             # Reverse to chronological order
             for conv in reversed(past_conversations):
                 chat_history += f"User: {conv.user_query}\nAgent: {conv.agent_response}\n"
+
+        # Check for friendly greetings first
+        clean_msg = message.lower().strip()
+        greetings = ["hi", "hello", "hey", "good morning", "good afternoon", "how are you", "what's up", "whats up"]
+        
+        # Exact match or simple greeting
+        if clean_msg in greetings or clean_msg.startswith("hello ") or clean_msg == "hi!":
+            greeting_msg = (
+                "Hello! 👋\n"
+                "I'm your ERP assistant. I can help you manage your hospital ERP system.\n\n"
+                "You can ask me things like:\n"
+                "• Check inventory for amber bottles\n"
+                "• Create a purchase order for 20 amber bottles\n"
+                "• Show vendors for amber bottles\n\n"
+                "How can I assist you today?"
+            )
+            
+            # Step 4: Save conversation
+            conversation = AIConversation(
+                user_id=user_id,
+                session_id=session_id,
+                session_title=session_title,
+                user_query=message,
+                agent_response=greeting_msg
+            )
+            db.add(conversation)
+            db.commit()
+            
+            return {
+                "plan": None,
+                "response": greeting_msg,
+                "session_id": session_id,
+                "session_title": session_title
+            }
 
         # Step 1: Generate execution plan
         plan = generate_plan(message, chat_history)
@@ -177,3 +227,13 @@ def get_session_chat(session_id: str, db: Session = Depends(get_db)):
             "timestamp": msg.timestamp
         })
     return result
+
+@app.delete("/history/chat/{session_id}")
+def delete_session(session_id: str, db: Session = Depends(get_db)):
+    try:
+        db.query(AIConversation).filter(AIConversation.session_id == session_id).delete()
+        db.commit()
+        return {"status": "success", "message": "Session deleted"}
+    except Exception as e:
+        db.rollback()
+        return {"status": "error", "message": str(e)}

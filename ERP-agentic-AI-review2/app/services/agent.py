@@ -58,7 +58,8 @@ def fallback_planner(user_message: str, chat_history: str = ""):
         "inventory", "stock", "bottle", "amber", "glass", "generate", 
         "create", "check", "less", "than", "billing", "bill", 
         "receipt", "quantity", "amount", "price", "total", 
-        "supplier", "restock", "reorder", "supply", "buy", "procure"
+        "supplier", "restock", "reorder", "supply", "buy", "procure",
+        "many", "left", "supplies", "who"
     ]
     
     # Extract all words and fuzzy match longer ones to securely avoid breaking small terms like 'po' or 'if'
@@ -153,30 +154,44 @@ def fallback_planner(user_message: str, chat_history: str = ""):
         except Exception:
             pass
 
-    if "purchase" in user_msg or "order" in user_msg or "po" in user_msg:
+    if "vendor" in user_msg or "supplies" in user_msg or "who" in user_msg or "supplier" in user_msg:
+        return {
+            "steps": [
+                {
+                    "type": "tool",
+                    "name": "get_vendors",
+                    "args": {}
+                }
+            ]
+        }
+
+    if "purchase" in user_msg or "order" in user_msg or "po" in user_msg or "buy" in user_msg:
 
         qty_match = re.search(r"\d+", user_msg)
         quantity = int(qty_match.group()) if qty_match else 1
 
         item = "item"
-        item_match = re.search(r'(?:for|of)\s+([a-zA-Z0-9\s]+?)(?:\s+and)', user_msg)
-        if item_match and item_match.group(1).strip() not in ["them", "it"]:
-            item = item_match.group(1).strip()
-            # Clean up trailing words like 'produce' or 'generate'
-            item = re.sub(r'\s+(?:create|make|generate|produce|it).*$', '', item).strip()
-        elif re.search(r'(?:for|of)\s+(?:an?\s+)?(?:[0-9]+\s+)?([a-z0-9\s]+)', user_msg) and re.search(r'(?:for|of)\s+(?:an?\s+)?(?:[0-9]+\s+)?([a-z0-9\s]+)', user_msg).group(1).strip() not in ["them", "it"]:
-            item_match = re.search(r'(?:for|of)\s+(?:an?\s+)?(?:[0-9]+\s+)?([a-z0-9\s]+)', user_msg)
-            item = item_match.group(1).strip()
-        elif re.search(r'(?:for|of)\s+(?:an?\s+)?(?:[0-9]+\s+)?([a-z0-9\s]+)', msg):
-            item_match = re.search(r'(?:for|of)\s+(?:an?\s+)?(?:[0-9]+\s+)?([a-z0-9\s]+)', msg)
-            item = item_match.group(1).strip()
-            item = re.sub(r'\\n.*', '', item).strip()
-            item = item.replace('agent', '').strip()
+        if "amber bottle" in user_msg.replace("bottles", "bottle"):
+            item = "amber bottle"
         else:
-            for keyword in ["laptop", "mouse", "keyboard", "arishtam", "kashayam", "choornam", "bottle"]:
-                if keyword in msg:
-                    item = keyword
-                    break
+            item_match = re.search(r'(?:for|of)\s+([a-zA-Z0-9\s]+?)(?:\s+and)', user_msg)
+            if item_match and item_match.group(1).strip() not in ["them", "it"]:
+                item = item_match.group(1).strip()
+                # Clean up trailing words like 'produce' or 'generate'
+                item = re.sub(r'\s+(?:create|make|generate|produce|it).*$', '', item).strip()
+            elif re.search(r'(?:for|of)\s+(?:an?\s+)?(?:[0-9]+\s+)?([a-z0-9\s]+)', user_msg) and re.search(r'(?:for|of)\s+(?:an?\s+)?(?:[0-9]+\s+)?([a-z0-9\s]+)', user_msg).group(1).strip() not in ["them", "it"]:
+                item_match = re.search(r'(?:for|of)\s+(?:an?\s+)?(?:[0-9]+\s+)?([a-z0-9\s]+)', user_msg)
+                item = item_match.group(1).strip()
+            elif re.search(r'(?:for|of)\s+(?:an?\s+)?(?:[0-9]+\s+)?([a-z0-9\s]+)', msg):
+                item_match = re.search(r'(?:for|of)\s+(?:an?\s+)?(?:[0-9]+\s+)?([a-z0-9\s]+)', msg)
+                item = item_match.group(1).strip()
+                item = re.sub(r'\\n.*', '', item).strip()
+                item = item.replace('agent', '').strip()
+            else:
+                for keyword in ["laptop", "mouse", "keyboard", "arishtam", "kashayam", "choornam", "bottle"]:
+                    if keyword in msg:
+                        item = keyword
+                        break
 
         steps = [
             {
@@ -201,17 +216,20 @@ def fallback_planner(user_message: str, chat_history: str = ""):
         }
 
 
-    if "inventory" in user_msg or "stock" in user_msg or "check" in user_msg:
+    if "inventory" in user_msg or "stock" in user_msg or "check" in user_msg or "have" in user_msg or "many" in user_msg or "left" in user_msg:
 
         item = "item"
-        item_match = re.search(r'(?:for|of)\s+(?:an?\s+)?(?:[0-9]+\s+)?([a-z0-9\s]+)', user_msg)
-        if item_match:
-            item = item_match.group(1).strip()
+        if "amber bottle" in user_msg.replace("bottles", "bottle"):
+            item = "amber bottle"
         else:
-            for keyword in ["laptop", "mouse", "keyboard", "arishtam", "kashayam", "choornam", "bottle"]:
-                if keyword in msg:
-                    item = keyword
-                    break
+            item_match = re.search(r'(?:for|of)\s+(?:an?\s+)?(?:[0-9]+\s+)?([a-z0-9\s]+)', user_msg)
+            if item_match:
+                item = item_match.group(1).strip()
+            else:
+                for keyword in ["laptop", "mouse", "keyboard", "arishtam", "kashayam", "choornam", "bottle"]:
+                    if keyword in msg:
+                        item = keyword
+                        break
 
         return {
             "steps": [

@@ -7,30 +7,43 @@ import os
 # Check inventory
 def get_inventory(item: str, db):
 
+    # Split item phrase into words to search individually or together
     words = item.lower().split()
-
-  
+    
     query = db.query(Inventory)
-
     for word in words:
         query = query.filter(Inventory.item_name.ilike(f"%{word}%"))
+        
+    products = query.all()
 
-    product = query.first()
+    if not products:
+        # Also try a direct substring match if word split was too strict
+        products = db.query(Inventory).filter(Inventory.item_name.ilike(f"%{item.lower()}%")).all()
 
-
-
-    if not product:
+    if not products:
         return {
             "item": item,
             "quantity": 0,
-            "message": "Item not found in inventory"
+            "message": f"Item '{item}' not found in inventory"
         }
 
-    quantity = product.quantity
-
+    # If multiple products match, we can sum them or list them. 
+    # The requirement is just to return them. Let's return the first one's format, 
+    # but aggregate the message if there are multiple.
+    if len(products) == 1:
+        return {
+            "item": products[0].item_name,
+            "quantity": products[0].quantity
+        }
+    
+    # Multiple matches
+    result_lines = [f"{p.item_name}: {p.quantity}" for p in products]
+    total_qty = sum(p.quantity for p in products)
+    
     return {
-        "item": product.item_name,
-        "quantity": quantity
+        "item": item,
+        "quantity": total_qty,
+        "message": "Found multiple matching items:\n" + "\n".join(result_lines)
     }
 
 # Create purchase order
