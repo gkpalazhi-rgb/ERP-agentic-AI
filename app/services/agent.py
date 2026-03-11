@@ -188,9 +188,11 @@ def generate_plan(user_message: str, chat_history: str = ""):
 
     system_prompt = f"""You are an ERP AI assistant for Thaikkattu Mooss Vaidyaratnam (Ayurvedic company). You handle conversation and ERP tasks.
 
+RESPONSE STYLE: Be brief and direct. No filler phrases. Stick to key information only. Do NOT say things like "Hello! I'm happy to help" or "According to our records" or "Let me check". Just give the answer.
+
 ALWAYS return ONLY valid JSON in one of these two formats:
 
-For greetings/chat/questions: {{"type": "conversation", "response": "your friendly reply"}}
+For greetings/chat/questions: {{"type": "conversation", "response": "your short reply"}}
 For ERP tasks: {{"type": "action", "steps": [{{"type": "tool", "name": "TOOL", "args": {{}}}}]}}
 
 Tools: {tools_description}
@@ -198,13 +200,14 @@ Tools: {tools_description}
 Conditions can chain steps: {{"type": "condition", "left": "last.quantity", "operator": "<", "right": 10}}
 
 Examples:
-User: "hey how are you" -> {{"type": "conversation", "response": "Hello! I'm doing well! I can help with inventory, orders, vendors, and invoices. What do you need?"}}
+User: "hey how are you" -> {{"type": "conversation", "response": "Hi! How can I help?"}}
+User: "what can you do" -> {{"type": "conversation", "response": "I can check inventory, create purchase orders, view vendors, check PO status, and generate invoices."}}
 User: "check inventory for amber bottle" -> {{"type": "action", "steps": [{{"type": "tool", "name": "get_inventory", "args": {{"item": "amber bottle"}}}}]}}
 User: "create PO for 50 bottles" -> {{"type": "action", "steps": [{{"type": "tool", "name": "create_purchase_order", "args": {{"item": "bottles", "quantity": 50}}}}]}}
 User: "generate invoice for PO 3" -> {{"type": "action", "steps": [{{"type": "tool", "name": "generate_purchase_invoice", "args": {{"po_id": 3}}}}]}}
 
 Chat history: {chat_history if chat_history else "None"}
-Handle typos. Return ONLY JSON."""
+Handle typos. Return ONLY JSON. Keep responses SHORT."""
 
     payload = {
         "model": "llama3",
@@ -234,9 +237,9 @@ Handle typos. Return ONLY JSON."""
             if attempt == 0:
                 print("LLM returned invalid JSON. Retrying with shorter prompt...")
                 payload["prompt"] = (
-                    "Return ONLY a JSON object. No markdown, no explanation.\n"
+                    "Return ONLY a JSON object. No markdown, no explanation. Keep responses SHORT and direct.\n"
                     f"User said: \"{user_message}\"\n"
-                    "If greeting/casual talk: {\"type\": \"conversation\", \"response\": \"your friendly reply\"}\n"
+                    "If greeting/casual talk: {\"type\": \"conversation\", \"response\": \"short direct reply\"}\n"
                     "If ERP task (inventory/order/vendor/invoice): {\"type\": \"action\", \"steps\": [{\"type\": \"tool\", \"name\": \"tool_name\", \"args\": {}}]}\n"
                     "JSON:"
                 )
@@ -253,7 +256,7 @@ Handle typos. Return ONLY JSON."""
                     "model": "llama3",
                     "prompt": (
                         f"User says: \"{user_message}\"\n"
-                        "Reply as a friendly ERP assistant in JSON format:\n"
+                        "Reply briefly as an ERP assistant in JSON format:\n"
                         "{\"type\": \"conversation\", \"response\": \"your reply\"}\n"
                         "JSON:"
                     ),
@@ -283,14 +286,5 @@ Handle typos. Return ONLY JSON."""
     # If even fallback doesn't match (likely casual chat) — return a generic friendly response
     return {
         "type": "conversation",
-        "response": (
-            "Hello! I'm your ERP assistant for Thaikkattu Mooss Vaidyaratnam. "
-            "I can help you with:\n"
-            "• Check inventory levels\n"
-            "• Create purchase orders\n"
-            "• View vendor lists\n"
-            "• Check PO status\n"
-            "• Generate invoices\n\n"
-            "How can I help you today?"
-        )
+        "response": "I can help with inventory, purchase orders, vendors, PO status, and invoices. What do you need?"
     }
