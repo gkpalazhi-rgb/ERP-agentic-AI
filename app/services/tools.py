@@ -49,6 +49,7 @@ def get_inventory(item: str, db, user_id: int = 1):
 
 # Create purchase order
 def create_purchase_order(item: str, quantity: int, db, vendor_name: str = "default_vendor", user_id: int = 1):
+    from app.services.email_service import send_po_email
 
     purchase_order = PurchaseOrder(
         item_name=item.lower(),
@@ -60,22 +61,54 @@ def create_purchase_order(item: str, quantity: int, db, vendor_name: str = "defa
     db.commit()
     db.refresh(purchase_order)
 
+    # Look up vendor email and send notification
+    email_result = {"email_sent": False, "reason": "Vendor not found in database"}
+
+    # Try matching by vendor name first, then by item name as fallback
+    vendor_record = db.query(Vendor).filter(
+        Vendor.vendor_name.ilike(f"%{vendor_name}%")
+    ).first()
+
+    if not vendor_record and vendor_name == "default_vendor":
+        # If no vendor specified, try finding one that supplies this item
+        vendor_record = db.query(Vendor).filter(
+            Vendor.item_name.ilike(f"%{item}%")
+        ).first()
+        if vendor_record:
+            print(f"[PO EMAIL] Matched vendor '{vendor_record.vendor_name}' by item '{item}'")
+
+    print(f"[PO EMAIL] Vendor lookup for '{vendor_name}' / item '{item}': "
+          f"{'Found ' + vendor_record.vendor_name + ' (email: ' + str(vendor_record.email) + ')' if vendor_record else 'NOT FOUND'}")
+
+    if vendor_record and vendor_record.email:
+        email_result = send_po_email(
+            vendor_name=vendor_record.vendor_name,
+            vendor_email=vendor_record.email,
+            po_id=purchase_order.id,
+            item_name=item,
+            quantity=quantity
+        )
+    elif vendor_record and not vendor_record.email:
+        email_result = {"email_sent": False, "reason": f"No email on file for vendor '{vendor_record.vendor_name}'"}
+
     return {
         "status": "PO Created",
         "item": item,
         "quantity": quantity,
         "vendor_name": vendor_name,
-        "po_id": purchase_order.id
+        "po_id": purchase_order.id,
+        "email_notification": email_result
     }
 
 
 # Add vendor
-def add_vendor(vendor_name: str, item_name: str, price: float, db, user_id: int = 1):
+def add_vendor(vendor_name: str, item_name: str, price: float, db, email: str = None, user_id: int = 1):
 
     vendor = Vendor(
         vendor_name=vendor_name,
         item_name=item_name,
-        price=price
+        price=price,
+        email=email
     )
 
     db.add(vendor)
@@ -84,7 +117,38 @@ def add_vendor(vendor_name: str, item_name: str, price: float, db, user_id: int 
 
     return {
         "status": "Vendor Added",
-        "vendor_id": vendor.id
+        "vendor_id": vendor.id,
+        "email": email
+    }
+
+
+# Update vendor details (especially email)
+def update_vendor(vendor_name: str, db, email: str = None, price: float = None, user_id: int = 1):
+    vendor = db.query(Vendor).filter(
+        Vendor.vendor_name.ilike(f"%{vendor_name}%")
+    ).first()
+
+    if not vendor:
+        return {"error": f"Vendor '{vendor_name}' not found."}
+
+    updated_fields = []
+    if email is not None:
+        vendor.email = email
+        updated_fields.append(f"email → {email}")
+    if price is not None:
+        vendor.price = price
+        updated_fields.append(f"price → {price}")
+
+    if not updated_fields:
+        return {"error": "No fields to update. Provide email or price."}
+
+    db.commit()
+    db.refresh(vendor)
+
+    return {
+        "status": "Vendor Updated",
+        "vendor_name": vendor.vendor_name,
+        "updated": ", ".join(updated_fields)
     }
 
 
@@ -98,7 +162,8 @@ def get_vendors(db, user_id: int = 1):
             "id": v.id,
             "vendor_name": v.vendor_name,
             "item_name": v.item_name,
-            "price": v.price
+            "price": v.price,
+            "email": v.email
         }
         for v in vendors
     ]

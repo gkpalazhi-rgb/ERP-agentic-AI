@@ -135,10 +135,15 @@ function App() {
         
         setMessages(prev => [...prev, newAiMsg]);
       } else {
+        let errorText = 'Sorry, something went wrong. Please try again.';
+        try {
+          const errData = await res.json();
+          errorText = errData.detail || errData.error || errorText;
+        } catch {}
         const errorMsg: Message = {
           id: Date.now() + 1,
           sender: 'ai',
-          text: 'Sorry, something went wrong. Please try again.',
+          text: errorText,
           timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
         };
         setMessages(prev => [...prev, errorMsg]);

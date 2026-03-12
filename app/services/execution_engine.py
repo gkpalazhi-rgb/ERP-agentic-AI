@@ -123,7 +123,11 @@ def execute_plan(plan: dict, db, user_id: int = 1):
     if context.get("po_created") and context.get("initial_inventory_quantity") is not None:
         item_name = str(context.get('inventory_item', 'Item')).capitalize()
         vendor_text = f" from {context['po_vendor'].title()}" if context.get('po_vendor') and context['po_vendor'] != "the default vendor" else ""
-        return f"{item_name} in inventory = {context['initial_inventory_quantity']}, PO created for {context['po_quantity']} {context.get('po_item')}{vendor_text}."
+        email_info = last_result.get("email_notification", {}) if isinstance(last_result, dict) else {}
+        email_text = ""
+        if email_info.get("email_sent"):
+            email_text = f" Email notification sent to {email_info['recipient']}."
+        return f"{item_name} in inventory = {context['initial_inventory_quantity']}, PO created for {context['po_quantity']} {context.get('po_item')}{vendor_text}.{email_text}"
 
     if isinstance(last_result, dict):
         if "error" in last_result:
@@ -137,13 +141,22 @@ def execute_plan(plan: dict, db, user_id: int = 1):
             return f"Order #{last_result['po_id']} for {last_result['quantity']} {last_result['item']} from {last_result['vendor'].title()} is actively {last_result['status']}.{cost_text}"
 
         if "po_id" in last_result:
-            return f"Purchase order created with ID {last_result['po_id']}."
+            email_info = last_result.get("email_notification", {})
+            email_text = ""
+            if email_info.get("email_sent"):
+                email_text = f" Email notification sent to {email_info['recipient']}."
+            elif email_info.get("reason"):
+                email_text = f" (Email not sent: {email_info['reason']})"
+            return f"Purchase order created with ID {last_result['po_id']}.{email_text}"
 
         if "vendor_id" in last_result:
             return f"Vendor added successfully with ID {last_result['vendor_id']}."
 
         if last_result.get("status") == "Stock Updated":
             return last_result.get("message", f"Updated inventory for {last_result.get('item')}.")
+
+        if last_result.get("status") == "Vendor Updated":
+            return f"Vendor '{last_result['vendor_name']}' updated: {last_result['updated']}."
 
         if "leave_id" in last_result:
             return f"Leave application submitted successfully (ID: {last_result['leave_id']}) for {last_result['date']} ({last_result['type']})."

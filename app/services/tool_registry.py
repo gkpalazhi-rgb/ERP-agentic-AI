@@ -1,4 +1,4 @@
-from app.services.tools import get_inventory, create_purchase_order, add_vendor, get_vendors, get_po_status, generate_purchase_invoice, apply_leave, update_inventory_stock
+from app.services.tools import get_inventory, create_purchase_order, add_vendor, update_vendor, get_vendors, get_po_status, generate_purchase_invoice, apply_leave, update_inventory_stock
 
 TOOL_REGISTRY = {
 
@@ -22,11 +22,22 @@ TOOL_REGISTRY = {
 
     "add_vendor": {
         "function": add_vendor,
-        "description": "Add a new vendor with item name and price",
+        "description": "Add a new vendor with item name, price, and optional email",
         "args": {
             "vendor_name": "string",
             "item_name": "string",
-            "price": "number"
+            "price": "number",
+            "email": "string (optional)"
+        }
+    },
+
+    "update_vendor": {
+        "function": update_vendor,
+        "description": "Update a vendor's email or price",
+        "args": {
+            "vendor_name": "string",
+            "email": "string (optional)",
+            "price": "number (optional)"
         }
     },
 

@@ -8,3 +8,4 @@ class Vendor(Base):
     vendor_name = Column(String)
     item_name = Column(String)
     price = Column(Float)
+    email = Column(String, nullable=True)

@@ -53,6 +53,14 @@ def run_migrations():
                 conn.commit()
                 print("Migration: added 'username' to leave_applications")
 
+        # Add 'email' to vendors if missing
+        if 'vendors' in inspector.get_table_names():
+            existing_cols = [c['name'] for c in inspector.get_columns('vendors')]
+            if 'email' not in existing_cols:
+                conn.execute(text("ALTER TABLE vendors ADD COLUMN email VARCHAR"))
+                conn.commit()
+                print("Migration: added 'email' to vendors")
+
 try:
     run_migrations()
 except Exception as e:
@@ -170,6 +178,8 @@ def chat(user_id: int, message: str, session_id: Optional[str] = None, db: Sessi
         }
 
     except Exception as e: 
+        import traceback
+        traceback.print_exc()
         error_msg = str(e)
 
         conversation = AIConversation(
