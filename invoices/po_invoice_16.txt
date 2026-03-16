@@ -3,7 +3,7 @@
                 PURCHASE INVOICE
 ==================================================
 PO ID:         16
-STATUS:        Processing
+STATUS:        Delivered
 VENDOR:        A
 --------------------------------------------------
 ITEM:          Arishtam
