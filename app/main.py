@@ -4,6 +4,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy import func
 import uuid
 from typing import Optional
+from datetime import datetime
 
 from app.database.db import engine, SessionLocal, Base
 from app.models.conversation import AIConversation
@@ -32,37 +33,72 @@ app.add_middleware(
 Base.metadata.create_all(bind=engine)
 
 # Migrate: add missing columns to existing tables
-from sqlalchemy import text, inspect as sa_inspect
+from sqlalchemy import inspect as sa_inspect, text
 
 def run_migrations():
     inspector = sa_inspect(engine)
     with engine.connect() as conn:
-        # Add 'status' to purchase_orders if missing
-        if 'purchase_orders' in inspector.get_table_names():
-            existing_cols = [c['name'] for c in inspector.get_columns('purchase_orders')]
-            if 'status' not in existing_cols:
-                conn.execute(text("ALTER TABLE purchase_orders ADD COLUMN status VARCHAR DEFAULT 'Pending'"))
-                conn.commit()
-                print("Migration: added 'status' to purchase_orders")
+        def add_column_if_missing(table_name: str, column_name: str, ddl: str):
+            if table_name not in inspector.get_table_names():
+                return
 
-        # Add 'username' to leave_applications if missing
-        if 'leave_applications' in inspector.get_table_names():
-            existing_cols = [c['name'] for c in inspector.get_columns('leave_applications')]
-            if 'username' not in existing_cols:
-                conn.execute(text("ALTER TABLE leave_applications ADD COLUMN username VARCHAR"))
-                conn.commit()
-                print("Migration: added 'username' to leave_applications")
+            existing_cols = [c["name"] for c in inspector.get_columns(table_name)]
+            if column_name in existing_cols:
+                return
 
-        # Add 'email' to vendors if missing
-        if 'vendors' in inspector.get_table_names():
-            existing_cols = [c['name'] for c in inspector.get_columns('vendors')]
-            if 'email' not in existing_cols:
-                conn.execute(text("ALTER TABLE vendors ADD COLUMN email VARCHAR"))
-                conn.commit()
-                print("Migration: added 'email' to vendors")
+            conn.execute(text(f"ALTER TABLE {table_name} ADD COLUMN {column_name} {ddl}"))
+            conn.commit()
+            print(f"Migration: added '{column_name}' to {table_name}")
+
+        add_column_if_missing("purchase_orders", "status", "VARCHAR DEFAULT 'Pending'")
+        add_column_if_missing("purchase_orders", "po_id", "VARCHAR")
+        add_column_if_missing("purchase_orders", "item_code", "VARCHAR")
+        add_column_if_missing("leave_applications", "username", "VARCHAR")
+        add_column_if_missing("vendors", "email", "VARCHAR")
+        add_column_if_missing("inventory", "mrp", "FLOAT")
+
+
+def backfill_purchase_order_fields():
+    db = SessionLocal()
+    try:
+        purchase_orders = db.query(PurchaseOrder).all()
+        updated = 0
+
+        for po in purchase_orders:
+            changed = False
+
+            if not po.item_code:
+                inventory_match = db.query(Inventory).filter(
+                    Inventory.item_name.ilike(f"%{po.item_name}%")
+                ).first()
+                po.item_code = (
+                    inventory_match.item_code
+                    if inventory_match and inventory_match.item_code
+                    else f"GEN-{(po.item_name or 'PO')[:3].upper()}"
+                )
+                changed = True
+
+            if not po.po_id:
+                created_date = po.created_at or datetime.utcnow()
+                date_part = created_date.strftime("%y%m%d")
+                po.po_id = f"{date_part}-{po.item_code}-{po.id:03d}"
+                changed = True
+
+            if changed:
+                updated += 1
+
+        if updated:
+            db.commit()
+            print(f"Migration: backfilled {updated} purchase orders with po_id/item_code")
+    except Exception as e:
+        db.rollback()
+        print(f"Migration backfill warning: {e}")
+    finally:
+        db.close()
 
 try:
     run_migrations()
+    backfill_purchase_order_fields()
 except Exception as e:
     print(f"Migration warning: {e}")
 
@@ -83,6 +119,13 @@ def seed_data():
         db.close()
 
 seed_data()
+
+# Preload the semantic intent classifier model at startup
+try:
+    from app.services.intent_classifier import preload_model
+    preload_model()
+except Exception as e:
+    print(f"[Intent] Preload skipped: {e}")
 
 
 # -------------------------------
@@ -173,6 +216,7 @@ def chat(user_id: int, message: str, session_id: Optional[str] = None, db: Sessi
         return {
             "plan": plan,
             "response": response,
+            "intent_detection": plan.get("intent_detection") if isinstance(plan, dict) else None,
             "session_id": session_id,
             "session_title": session_title
         }

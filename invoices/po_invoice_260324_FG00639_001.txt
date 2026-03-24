@@ -2,12 +2,13 @@
            THAIKKATTU MOOSS VAIDYARATNAM
                 PURCHASE INVOICE
 ==================================================
-PO ID:         16
+PO ID:         260324-FG00639-001
 STATUS:        Delivered
-VENDOR:        A
+VENDOR:        Default_Vendor
 --------------------------------------------------
-ITEM:          Arishtam
-QUANTITY:      10
+ITEM:          Dhanwantharam Soft Gel Capsule
+ITEM CODE:     FG00639
+QUANTITY:      50
 UNIT PRICE:    ₹0.00
 --------------------------------------------------
 TOTAL DUE:     ₹0.00

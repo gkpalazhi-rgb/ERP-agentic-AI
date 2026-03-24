@@ -51,7 +51,7 @@ TOOL_REGISTRY = {
         "function": get_po_status,
         "description": "Check the status and total cost of an existing purchase order ID",
         "args": {
-            "po_id": "integer"
+            "po_id": "string or integer"
         }
     },
 
@@ -59,7 +59,7 @@ TOOL_REGISTRY = {
         "function": generate_purchase_invoice,
         "description": "Generate a .txt file purchase invoice for an existing purchase order ID",
         "args": {
-            "po_id": "integer"
+            "po_id": "string or integer"
         }
     },
 
@@ -80,7 +80,7 @@ TOOL_REGISTRY = {
         "args": {
             "item": "string",
             "quantity": "integer",
-            "po_id": "integer (optional)"
+            "po_id": "string or integer (optional)"
         }
     }
 }

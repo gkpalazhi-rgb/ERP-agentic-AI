@@ -5,7 +5,7 @@ from email.mime.multipart import MIMEMultipart
 from datetime import datetime
 
 
-def send_po_email(vendor_name: str, vendor_email: str, po_id: int, item_name: str, quantity: int):
+def send_po_email(vendor_name: str, vendor_email: str, po_id: str, item_name: str, quantity: int):
     """
     Sends a Purchase Order notification email to the vendor.
     Uses SMTP credentials from environment variables.

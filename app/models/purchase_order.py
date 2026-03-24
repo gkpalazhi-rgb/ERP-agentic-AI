@@ -6,7 +6,9 @@ class PurchaseOrder(Base):
     __tablename__ = "purchase_orders"
 
     id = Column(Integer, primary_key=True, index=True)
+    po_id = Column(String, unique=True, index=True)
     item_name = Column(String)
+    item_code = Column(String)
     quantity = Column(Integer)
     vendor = Column(String)
     status = Column(String, default="Pending")
