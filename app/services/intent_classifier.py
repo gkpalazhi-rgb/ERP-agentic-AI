@@ -34,6 +34,7 @@ CONFIDENCE_THRESHOLD = 0.55
 _model = None
 _model_load_error: str | None = None
 _intent_embeddings: dict[str, np.ndarray] | None = None
+_semantic_index: _SemanticIndex | None = None
 _lock = threading.Lock()
 
 # Item cache (populated from DB on first call)
@@ -68,6 +69,16 @@ INTENT_EXAMPLES: dict[str, list[str]] = {
         "items in stock",
         "is this product available",
         "any stock left",
+        "inventory for amber bottle",
+        "available stock for capsules",
+        "warehouse balance for arishtam",
+        "how much amber bottle stock is there",
+        "check item quantity",
+        "look up current stock",
+        "see inventory for glass bottle",
+        "stock count for dropper bottles",
+        "is bottle stock available",
+        "tell me inventory quantity",
     ],
     "create_purchase_order": [
         "create a purchase order for 50 bottles",
@@ -90,6 +101,14 @@ INTENT_EXAMPLES: dict[str, list[str]] = {
         "buy inventory items",
         "raise PO for restocking",
         "get more stock ordered",
+        "create restock order for capsules",
+        "make purchase order for glass bottle",
+        "procurement request for amber bottle",
+        "issue po for 20 bottles",
+        "place replenishment order",
+        "order stock from supplier",
+        "raise reorder for inventory",
+        "create vendor order for capsules",
     ],
     "get_po_status": [
         "status of PO 260324-AYU001-001",
@@ -109,6 +128,13 @@ INTENT_EXAMPLES: dict[str, list[str]] = {
         "PO delivery status",
         "has my order arrived",
         "current status of PO",
+        "what is the total cost of po 5",
+        "show po details",
+        "get purchase order cost",
+        "track order delivery",
+        "is purchase order pending",
+        "show me po summary",
+        "lookup po information",
     ],
     "generate_invoice": [
         "generate invoice for PO 260324-AYU001-001",
@@ -125,6 +151,12 @@ INTENT_EXAMPLES: dict[str, list[str]] = {
         "create billing document",
         "invoice generation",
         "make receipt for this PO",
+        "download invoice for order 5",
+        "create purchase invoice text file",
+        "prepare invoice copy for po 12",
+        "billing file for purchase order",
+        "export invoice for po",
+        "invoice for delivered order",
     ],
     "get_vendors": [
         "show all vendors",
@@ -141,6 +173,12 @@ INTENT_EXAMPLES: dict[str, list[str]] = {
         "vendor catalog",
         "supplier directory",
         "list all suppliers",
+        "show vendor master",
+        "which vendor supplies capsules",
+        "who supplies amber bottles",
+        "vendor list for inventory",
+        "display supplier contacts",
+        "find available vendors",
     ],
     "add_vendor": [
         "add a new vendor called pharma corp",
@@ -153,6 +191,11 @@ INTENT_EXAMPLES: dict[str, list[str]] = {
         "add vendor details",
         "onboard a new vendor",
         "create supplier record",
+        "add supplier medix for capsules with email medix@test.com",
+        "create vendor profile for bottle supplier",
+        "save a new supplier with price 45",
+        "new vendor named herbal source",
+        "register vendor for amber bottle supply",
     ],
     "update_vendor": [
         "update vendor email",
@@ -165,6 +208,11 @@ INTENT_EXAMPLES: dict[str, list[str]] = {
         "modify vendor pricing",
         "change vendor contact",
         "edit supplier details",
+        "set vendor email to purchase@test.com",
+        "revise supplier rate to 45",
+        "update vendor contact info",
+        "change supplier email and price",
+        "edit vendor record",
     ],
     "apply_leave": [
         "i want to apply for leave",
@@ -184,6 +232,12 @@ INTENT_EXAMPLES: dict[str, list[str]] = {
         "need time off",
         "going on leave",
         "request day off",
+        "submit leave for next monday",
+        "book personal leave",
+        "mark leave for tomorrow",
+        "request half day off",
+        "apply casual leave",
+        "take second half leave today",
     ],
     "stock_arrival": [
         "50 bottles have arrived",
@@ -201,6 +255,12 @@ INTENT_EXAMPLES: dict[str, list[str]] = {
         "shipment arrived for order",
         "stock delivery completed",
         "items have been delivered",
+        "received goods for po 5",
+        "mark stock as delivered",
+        "inventory replenishment arrived",
+        "po shipment received",
+        "update stock after delivery",
+        "goods receipt for purchase order",
     ],
 }
 
@@ -216,6 +276,85 @@ INTENT_TO_TOOL: dict[str, str] = {
     "apply_leave": "apply_leave",
     "stock_arrival": "update_inventory_stock",
 }
+
+
+@dataclass(frozen=True)
+class _KeywordIntentRule:
+    intent: str
+    patterns: tuple[re.Pattern[str], ...]
+    confidence: float = 0.98
+
+
+KEYWORD_INTENT_RULES: tuple[_KeywordIntentRule, ...] = (
+    _KeywordIntentRule(
+        intent="generate_invoice",
+        patterns=(
+            re.compile(r"\b(?:generate|create|make|prepare|print|download|export)\b.*\b(?:invoice|bill|receipt)\b", re.I),
+            re.compile(r"\b(?:invoice|bill|receipt)\b.*\b(?:po|order)\b", re.I),
+        ),
+    ),
+    _KeywordIntentRule(
+        intent="stock_arrival",
+        patterns=(
+            re.compile(r"\b(?:arrived|received|delivered|receipt|goods receipt)\b.*\b(?:po|purchase order|stock|shipment|goods|items)\b", re.I),
+            re.compile(r"\b(?:update|mark)\b.*\b(?:stock|inventory)\b.*\b(?:arrived|received|delivered)\b", re.I),
+        ),
+        confidence=0.98,
+    ),
+    _KeywordIntentRule(
+        intent="get_po_status",
+        patterns=(
+            re.compile(r"\b(?:status|track|where|delivered|pending|cost|total cost|summary|details)\b.*\b(?:po|purchase order|order)\b", re.I),
+            re.compile(r"\b(?:po|purchase order|order)\b.*\b(?:status|cost|delivered|pending|summary|details)\b", re.I),
+        ),
+    ),
+    _KeywordIntentRule(
+        intent="check_inventory",
+        patterns=(
+            re.compile(r"\b(?:inventory|stock|quantity|available|availability|balance|warehouse)\b", re.I),
+            re.compile(r"\bhow many\b.*\b(?:have|left|in stock)\b", re.I),
+        ),
+        confidence=0.93,
+    ),
+    _KeywordIntentRule(
+        intent="create_purchase_order",
+        patterns=(
+            re.compile(r"\b(?:create|raise|place|make|issue)\b.*\b(?:purchase order|po)\b", re.I),
+            re.compile(r"\b(?:restock|reorder|procure|purchase|buy|replenish)\b", re.I),
+        ),
+        confidence=0.94,
+    ),
+    _KeywordIntentRule(
+        intent="get_vendors",
+        patterns=(
+            re.compile(r"\b(?:show|list|get|display|find|who)\b.*\b(?:vendors|vendor|suppliers|supplier)\b", re.I),
+            re.compile(r"\b(?:vendors|suppliers|supplier directory|vendor catalog)\b", re.I),
+        ),
+        confidence=0.95,
+    ),
+    _KeywordIntentRule(
+        intent="add_vendor",
+        patterns=(
+            re.compile(r"\b(?:add|register|create|onboard|save)\b.*\b(?:vendor|supplier)\b", re.I),
+        ),
+        confidence=0.97,
+    ),
+    _KeywordIntentRule(
+        intent="update_vendor",
+        patterns=(
+            re.compile(r"\b(?:update|change|modify|edit|revise|set)\b.*\b(?:vendor|supplier)\b", re.I),
+        ),
+        confidence=0.97,
+    ),
+    _KeywordIntentRule(
+        intent="apply_leave",
+        patterns=(
+            re.compile(r"\b(?:apply|request|submit|take|book|mark)\b.*\bleave\b", re.I),
+            re.compile(r"\b(?:day off|half day|time off|sick leave|casual leave)\b", re.I),
+        ),
+        confidence=0.98,
+    ),
+)
 
 
 # ---------------------------------------------------------------------------
@@ -239,6 +378,13 @@ class IntentDetection:
         }
 
 
+@dataclass(frozen=True)
+class _SemanticIndex:
+    matrix: np.ndarray
+    intents: tuple[str, ...]
+    examples: tuple[str, ...]
+
+
 # ===================================================================
 #  ITEM CACHE — loads 900+ items from the DB once, thread-safe
 # ===================================================================
@@ -247,19 +393,26 @@ class _ItemCache:
 
     def __init__(self, items: list[str]):
         # Keep originals sorted longest-first for greedy substring matching
-        self.items: list[str] = sorted(items, key=len, reverse=True)
+        self.items: list[str] = sorted(set(items), key=len, reverse=True)
         # Lowercase lookup map:  lowercase_name  →  original_name
         self._lower_map: dict[str, str] = {i.lower(): i for i in self.items}
         # Pre-split for fuzzy matching (list of lowercase names)
         self._lower_keys: list[str] = list(self._lower_map.keys())
+        escaped_items = [re.escape(item) for item in self.items]
+        self._substring_pattern = (
+            re.compile(r"(?<!\w)(?:" + "|".join(escaped_items) + r")(?!\w)", re.I)
+            if escaped_items
+            else None
+        )
 
     # -- fast path: substring scan against user text --
     def find_substring(self, text: str) -> str | None:
         """Return the longest item name found as a substring in *text*."""
-        lowered = text.lower()
-        for item_lower, item_original in self._lower_map.items():
-            if item_lower in lowered:
-                return item_original
+        if self._substring_pattern is None:
+            return None
+        match = self._substring_pattern.search(text)
+        if match:
+            return self._lower_map.get(match.group(0).lower())
         return None
 
     # -- slower path: fuzzy match --
@@ -374,14 +527,75 @@ def _get_intent_embeddings() -> dict[str, np.ndarray] | None:
     return _intent_embeddings
 
 
+def _get_semantic_index() -> _SemanticIndex | None:
+    global _semantic_index
+    if _semantic_index is not None:
+        return _semantic_index
+
+    intent_embeddings = _get_intent_embeddings()
+    if intent_embeddings is None:
+        return None
+
+    with _lock:
+        if _semantic_index is not None:
+            return _semantic_index
+
+        matrix_parts: list[np.ndarray] = []
+        intents: list[str] = []
+        examples: list[str] = []
+
+        for intent, sample_texts in INTENT_EXAMPLES.items():
+            embeddings = intent_embeddings[intent]
+            matrix_parts.append(embeddings)
+            intents.extend([intent] * len(sample_texts))
+            examples.extend(sample_texts)
+
+        _semantic_index = _SemanticIndex(
+            matrix=np.vstack(matrix_parts),
+            intents=tuple(intents),
+            examples=tuple(examples),
+        )
+
+    return _semantic_index
+
+
+def _normalize_message(text: str) -> str:
+    return re.sub(r"\s+", " ", re.sub(r"[^\w\s@.-]+", " ", text.lower())).strip()
+
+
+def _match_keyword_intent(user_message: str) -> IntentDetection | None:
+    normalized = _normalize_message(user_message)
+    has_po_id = _extract_po_id(user_message) is not None
+
+    for rule in KEYWORD_INTENT_RULES:
+        if rule.intent in {"generate_invoice", "get_po_status", "stock_arrival"} and not has_po_id:
+            continue
+
+        for pattern in rule.patterns:
+            if pattern.search(normalized):
+                return IntentDetection(
+                    intent=rule.intent,
+                    confidence=rule.confidence,
+                    matched_example=pattern.pattern,
+                    reason="keyword_rule_match",
+                    available=True,
+                )
+
+    return None
+
+
 # ===================================================================
 #  CORE DETECTION
 # ===================================================================
 def detect_intent(user_message: str) -> IntentDetection:
-    model = _get_model()
-    intent_embeddings = _get_intent_embeddings()
+    keyword_match = _match_keyword_intent(user_message)
+    if keyword_match is not None:
+        return keyword_match
 
-    if model is None or intent_embeddings is None:
+    model = _get_model()
+    semantic_index = _get_semantic_index()
+
+    if model is None or semantic_index is None:
         return IntentDetection(
             intent=None,
             confidence=0.0,
@@ -396,21 +610,11 @@ def detect_intent(user_message: str) -> IntentDetection:
         normalize_embeddings=True,
     )[0]
 
-    best_intent: str | None = None
-    best_score: float = -1.0
-    best_example: str | None = None
-
-    for intent, examples in INTENT_EXAMPLES.items():
-        example_embeddings = intent_embeddings[intent]
-        # Cosine similarity via dot product (vectors are already normalised)
-        similarities = example_embeddings @ query_embedding
-        best_index = int(np.argmax(similarities))
-        max_similarity = float(similarities[best_index])
-
-        if max_similarity > best_score:
-            best_score = max_similarity
-            best_intent = intent
-            best_example = examples[best_index]
+    similarities = semantic_index.matrix @ query_embedding
+    best_index = int(np.argmax(similarities))
+    best_score = float(similarities[best_index])
+    best_intent = semantic_index.intents[best_index]
+    best_example = semantic_index.examples[best_index]
 
     if best_score >= CONFIDENCE_THRESHOLD:
         return IntentDetection(
@@ -448,6 +652,48 @@ _STOP_WORDS = frozenset({
     "please", "need", "want", "like", "some", "any",
 })
 
+_ITEM_BOUNDARY_WORDS = (
+    "for", "from", "with", "price", "email", "vendor", "supplier", "status",
+    "delivered", "arrived", "received", "tomorrow", "today", "please",
+    "po", "order",
+)
+
+
+def _clean_extracted_phrase(phrase: str, extra_stop_words: tuple[str, ...] = ()) -> str:
+    phrase = re.sub(r"[\s,.;:]+", " ", phrase).strip()
+    if not phrase:
+        return ""
+
+    stop_words = _ITEM_BOUNDARY_WORDS + extra_stop_words
+    phrase = re.sub(
+        r"\s+(?:" + "|".join(re.escape(word) for word in stop_words) + r")\b.*$",
+        "",
+        phrase,
+        flags=re.I,
+    ).strip()
+    phrase = re.sub(
+        r"(?:\b(?:" + "|".join(re.escape(word) for word in stop_words) + r")\b\s*)+$",
+        "",
+        phrase,
+        flags=re.I,
+    ).strip()
+    phrase = re.sub(r"\b(?:po|order)\s*#?\s*[a-z0-9-]+\b", "", phrase, flags=re.I)
+    phrase = re.sub(r"\b(?:have|has|is|are)\b$", "", phrase, flags=re.I).strip()
+    phrase = re.sub(r"\s+", " ", phrase).strip(" -")
+    return phrase
+
+
+def _extract_email(text: str) -> str | None:
+    match = re.search(r"[\w.-]+@[\w.-]+\.\w+", text)
+    return match.group(0) if match else None
+
+
+def _extract_price(text: str) -> float | None:
+    match = re.search(r"(?:price|priced?|cost|at|rs|inr)\s*(?:to\s+)?(?:rs\.?\s*|inr\s*)?(\d+(?:\.\d+)?)", text, re.I)
+    if match:
+        return float(match.group(1))
+    return None
+
 
 def _extract_item(text: str) -> str:
     """
@@ -460,35 +706,35 @@ def _extract_item(text: str) -> str:
       4. Fallback to "item"
     """
     cache = _load_item_cache()
+    normalized_text = _normalize_message(text)
 
-    # --- 1.  Regex: capture noun-phrase after  for / of ---
-    match = re.search(
-        r"(?:for|of)\s+(?:an?\s+)?(?:\d+\s+)?([a-zA-Z][a-zA-Z\s]+)", text, re.I
+    item_patterns = (
+        r"(?:inventory|stock|quantity|availability|available)\s+(?:for|of)\s+([a-z][a-z\s-]+)",
+        r"(?:for|of)\s+(?:an?\s+)?(?:\d+\s+)?([a-z][a-z\s-]+)",
+        r"(?:buy|order|purchase|procure|restock|reorder|receive|received|deliver|delivered|arrived|update)\s+(?:\d+\s+)?([a-z][a-z\s-]+)",
     )
-    if match:
-        phrase = match.group(1).strip()
-        # Strip trailing action verbs / prepositions
-        phrase = re.sub(
-            r"\s+(?:from|if|and|create|make|generate|order|purchase|po).*?$",
-            "",
-            phrase,
-            flags=re.I,
-        ).strip()
+
+    # --- 1. Regex phrase capture around common ERP verbs ---
+    for pattern in item_patterns:
+        match = re.search(pattern, normalized_text, re.I)
+        if not match:
+            continue
+
+        phrase = _clean_extracted_phrase(match.group(1), extra_stop_words=("if", "and"))
         if phrase and phrase.lower() not in _STOP_WORDS:
-            # Validate against cache (prefer exact substring)
             found = cache.find_substring(phrase)
             if found:
                 return found
-            # Still use the raw phrase — the DB search in tools.py does ILIKE
-            return phrase
+            if len(phrase) >= 3:
+                return phrase
 
     # --- 2.  Substring scan of the full text against the item cache ---
-    found = cache.find_substring(text)
+    found = cache.find_substring(normalized_text)
     if found:
         return found
 
     # --- 3.  Fuzzy match ---
-    found = cache.find_fuzzy(text)
+    found = cache.find_fuzzy(normalized_text)
     if found:
         return found
 
@@ -496,9 +742,10 @@ def _extract_item(text: str) -> str:
     # Remove common ERP verbs/prepositions and grab the first remaining word
     stripped = re.sub(
         r"\b(?:check|show|get|how|many|much|do|we|have|left|in|stock|"
-        r"is|the|a|an|of|for|what|quantity|inventory|available|remaining)\b",
+        r"is|the|a|an|of|for|what|quantity|inventory|available|remaining|"
+        r"received|receive|arrived|delivered|delivery|update|mark|po|order)\b",
         "",
-        text,
+        normalized_text,
         flags=re.I,
     ).strip()
     tokens = [t for t in stripped.split() if len(t) >= 3 and t.lower() not in _STOP_WORDS]
@@ -508,10 +755,12 @@ def _extract_item(text: str) -> str:
     return "item"
 
 
-def _extract_quantity(text: str) -> int:
-    """Extract the first integer from the text, default 1."""
-    match = re.search(r"\b(\d+)\b", text)
-    return int(match.group(1)) if match else 1
+def _extract_quantity(text: str, default: int = 1) -> int:
+    """Extract the first explicit quantity while ignoring PO identifiers."""
+    scrubbed = re.sub(r"\b\d{6}-[A-Z0-9]+-\d{3}\b", " ", text, flags=re.I)
+    scrubbed = re.sub(r"\b(?:po|order)\s*#?\s*\d+\b", " ", scrubbed, flags=re.I)
+    match = re.search(r"\b(?:qty|quantity|for|of)?\s*(\d+)\b", scrubbed, re.I)
+    return int(match.group(1)) if match else default
 
 
 def _extract_po_id(text: str) -> str | None:
@@ -531,16 +780,22 @@ def _extract_po_id(text: str) -> str | None:
 
 def _extract_vendor(text: str) -> str:
     """Extract vendor name after from / vendor / supplier keywords."""
-    match = re.search(
-        r"(?:from|vendor|supplier)\s+([a-zA-Z][a-zA-Z0-9\s]+)", text, re.I
+    normalized_text = _normalize_message(text)
+    patterns = (
+        r"from\s+(?:vendor\s+|supplier\s+)?(?:named\s+|called\s+)?([a-z][a-z0-9\s&.-]+?)(?:\s+(?:for|at|with|price|email|item)\b|$)",
+        r"(?:vendor|supplier)\s+(?:named\s+|called\s+)?([a-z][a-z0-9\s&.-]+?)(?:\s+(?:for|at|with|price|email|item)\b|$)",
+        r"(?:update|change|modify|edit|set)\s+([a-z][a-z0-9\s&.-]+?)\s+(?:vendor\s+)?(?:email|price|contact|details?)\b",
     )
-    if match:
-        vendor = match.group(1).strip()
-        vendor = re.sub(
-            r"\s+(?:at|for|with|price|email).*?$", "", vendor, flags=re.I
-        ).strip()
-        if vendor:
-            return vendor
+
+    for pattern in patterns:
+        match = re.search(pattern, normalized_text, re.I)
+        if match:
+            vendor = _clean_extracted_phrase(
+                match.group(1),
+                extra_stop_words=("item", "details", "contact"),
+            )
+            if vendor and vendor.lower() not in _STOP_WORDS:
+                return vendor
     return "default_vendor"
 
 
@@ -602,28 +857,47 @@ def _extract_leave_args(text: str) -> dict[str, str]:
 
 # ---------- Vendor add arguments ----------
 def _extract_vendor_add_args(text: str) -> dict[str, Any]:
-    vendor_name = "Unknown"
-    match = re.search(
-        r"(?:vendor|supplier)\s+(?:called\s+|named\s+)?"
-        r"([a-zA-Z][a-zA-Z0-9\s]+?)"
-        r"(?:\s+for|\s+at|\s+with|\s+price|\s*$)",
-        text,
-        re.I,
-    )
-    if match:
-        vendor_name = match.group(1).strip()
+    vendor_name = _extract_vendor(text)
+    if vendor_name == "default_vendor":
+        vendor_name = "Unknown"
 
     item_name = _extract_item(text)
 
-    price = 0.0
-    match = re.search(r"(?:price|at|rs|inr)\s*(\d+(?:\.\d+)?)", text, re.I)
-    if match:
-        price = float(match.group(1))
+    price = _extract_price(text) or 0.0
 
-    email = None
-    match = re.search(r"[\w.-]+@[\w.-]+\.\w+", text)
-    if match:
-        email = match.group(0)
+    email = _extract_email(text)
+
+    compact_text = _normalize_message(text)
+    compact_text = re.sub(r"\b(?:add|register|create|onboard|save|new)\b", " ", compact_text, flags=re.I)
+    compact_text = re.sub(r"\b(?:vendor|supplier)\b", " ", compact_text, flags=re.I)
+    if email:
+        compact_text = compact_text.replace(email.lower(), " ")
+    compact_text = re.sub(r"\b(?:price|at|rs|inr)\b", " ", compact_text, flags=re.I)
+    compact_text = re.sub(r"\b\d+(?:\.\d+)?\b", " ", compact_text)
+    compact_tokens = [t for t in compact_text.split() if t.lower() not in _STOP_WORDS]
+
+    compact_add_request = re.search(r"\b(?:add|register|create|onboard|save)\b.*\b(?:vendor|supplier)\b", text, re.I)
+    explicit_vendor_fields = re.search(r"\b(?:for|at|with|price|email)\b", text, re.I)
+
+    if compact_add_request and not explicit_vendor_fields and compact_tokens:
+        vendor_name = compact_tokens[0]
+        if len(compact_tokens) > 1:
+            fallback_item = " ".join(compact_tokens[1:])
+            cache = _load_item_cache()
+            item_name = cache.find_substring(fallback_item) or fallback_item
+
+    if vendor_name == "Unknown" and compact_tokens:
+        vendor_name = compact_tokens[0]
+
+    if item_name == "item" and len(compact_tokens) > 1:
+        fallback_item = " ".join(compact_tokens[1:])
+        cache = _load_item_cache()
+        item_name = cache.find_substring(fallback_item) or fallback_item
+
+    if price <= 0:
+        trailing_numbers = re.findall(r"\b\d+(?:\.\d+)?\b", _normalize_message(text))
+        if trailing_numbers:
+            price = float(trailing_numbers[-1])
 
     return {
         "vendor_name": vendor_name,
@@ -637,15 +911,9 @@ def _extract_vendor_add_args(text: str) -> dict[str, Any]:
 def _extract_vendor_update_args(text: str) -> dict[str, Any]:
     vendor_name = _extract_vendor(text)
 
-    email = None
-    match = re.search(r"[\w.-]+@[\w.-]+\.\w+", text)
-    if match:
-        email = match.group(0)
+    email = _extract_email(text)
 
-    price = None
-    match = re.search(r"(?:price|rs|inr)\s*(?:to\s+)?(\d+(?:\.\d+)?)", text, re.I)
-    if match:
-        price = float(match.group(1))
+    price = _extract_price(text)
 
     args: dict[str, Any] = {"vendor_name": vendor_name}
     if email:
@@ -665,8 +933,11 @@ def _build_plan_for_intent(intent: str, user_message: str) -> dict[str, Any] | N
         args = {"item": _extract_item(user_message)}
 
     elif intent == "create_purchase_order":
+        item = _extract_item(user_message)
+        if item == "item":
+            return None
         args = {
-            "item": _extract_item(user_message),
+            "item": item,
             "quantity": _extract_quantity(user_message),
             "vendor_name": _extract_vendor(user_message),
         }
@@ -696,9 +967,13 @@ def _build_plan_for_intent(intent: str, user_message: str) -> dict[str, Any] | N
         args = _extract_leave_args(user_message)
 
     elif intent == "stock_arrival":
+        item = _extract_item(user_message)
+        quantity = _extract_quantity(user_message, default=0)
+        if item == "item" or quantity <= 0:
+            return None
         args = {
-            "item": _extract_item(user_message),
-            "quantity": _extract_quantity(user_message),
+            "item": item,
+            "quantity": quantity,
         }
         po_id = _extract_po_id(user_message)
         if po_id:
@@ -711,6 +986,79 @@ def _build_plan_for_intent(intent: str, user_message: str) -> dict[str, Any] | N
         "type": "action",
         "steps": [{"type": "tool", "name": tool_name, "args": args}],
     }
+
+
+def _get_missing_required_arguments(intent: str, user_message: str) -> list[str]:
+    if intent in {"check_inventory", "create_purchase_order"}:
+        return ["item"] if _extract_item(user_message) == "item" else []
+
+    if intent in {"get_po_status", "generate_invoice"}:
+        return ["po_id"] if _extract_po_id(user_message) is None else []
+
+    if intent == "add_vendor":
+        args = _extract_vendor_add_args(user_message)
+        missing: list[str] = []
+        if args["vendor_name"] == "Unknown":
+            missing.append("vendor_name")
+        if args["item_name"] == "item":
+            missing.append("item_name")
+        if args["price"] <= 0:
+            missing.append("price")
+        return missing
+
+    if intent == "update_vendor":
+        args = _extract_vendor_update_args(user_message)
+        missing: list[str] = []
+        if args["vendor_name"] == "default_vendor":
+            missing.append("vendor_name")
+        if "email" not in args and "price" not in args:
+            missing.append("email_or_price")
+        return missing
+
+    if intent == "stock_arrival":
+        missing: list[str] = []
+        if _extract_item(user_message) == "item":
+            missing.append("item")
+        if _extract_quantity(user_message, default=0) <= 0:
+            missing.append("quantity")
+        return missing
+
+    return []
+
+
+def build_clarification_response(intent: str | None, user_message: str) -> str | None:
+    if not intent:
+        return None
+
+    missing = _get_missing_required_arguments(intent, user_message)
+    if not missing:
+        return None
+
+    prompts = {
+        ("check_inventory", "item"): "Which item should I check in inventory?",
+        ("create_purchase_order", "item"): "Which item should I create the purchase order for?",
+        ("get_po_status", "po_id"): "Which PO ID should I check?",
+        ("generate_invoice", "po_id"): "Which PO ID should I generate the invoice for?",
+        ("add_vendor", "vendor_name"): "What is the vendor name?",
+        ("add_vendor", "item_name"): "Which item does this vendor supply?",
+        ("add_vendor", "price"): "What price should I save for this vendor?",
+        ("update_vendor", "vendor_name"): "Which vendor should I update?",
+        ("update_vendor", "email_or_price"): "What should I update for the vendor: email, price, or both?",
+        ("stock_arrival", "item"): "Which item arrived?",
+        ("stock_arrival", "quantity"): "How many units arrived?",
+    }
+
+    if len(missing) == 1:
+        return prompts.get((intent, missing[0]))
+
+    if intent == "add_vendor":
+        return "Please share the vendor name, supplied item, and price."
+    if intent == "update_vendor":
+        return "Please share the vendor name and what to update: email, price, or both."
+    if intent == "stock_arrival":
+        return "Please share the item name and quantity that arrived."
+
+    return "I need one more detail to continue."
 
 
 # ===================================================================
@@ -732,6 +1080,12 @@ def classify_and_plan(
     if detection.intent is None:
         return None, metadata
 
+    missing_arguments = _get_missing_required_arguments(detection.intent, user_message)
+    if missing_arguments:
+        metadata["reason"] = "missing_required_arguments"
+        metadata["missing_arguments"] = missing_arguments
+        return None, metadata
+
     plan = _build_plan_for_intent(detection.intent, user_message)
     if plan is None:
         metadata["reason"] = "missing_required_arguments"
@@ -751,6 +1105,7 @@ def preload_model() -> None:
     t0 = time.time()
     _get_model()
     _get_intent_embeddings()
+    _get_semantic_index()
     _load_item_cache()
     elapsed = (time.time() - t0) * 1000
     print(f"[Intent] Preload complete in {elapsed:.0f}ms.")

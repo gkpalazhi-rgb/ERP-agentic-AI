@@ -6,7 +6,7 @@ from datetime import datetime, timedelta
 
 import requests
 
-from app.services.intent_classifier import classify_and_plan
+from app.services.intent_classifier import build_clarification_response, classify_and_plan
 from app.services.tool_registry import TOOL_REGISTRY
 
 OLLAMA_URL = "http://localhost:11434/api/generate"
@@ -42,6 +42,62 @@ def extract_json(text):
         print("JSON extraction error:", exc)
 
     return None
+
+
+def _get_last_turn(chat_history: str) -> tuple[str, str] | None:
+    if not chat_history.strip():
+        return None
+
+    matches = re.findall(r"User:\s*(.*?)\nAgent:\s*(.*?)(?=\nUser:|$)", chat_history, re.S)
+    if not matches:
+        return None
+
+    user_message, agent_message = matches[-1]
+    return user_message.strip(), agent_message.strip()
+
+
+def _continue_clarification(user_message: str, chat_history: str = ""):
+    last_turn = _get_last_turn(chat_history)
+    if not last_turn:
+        return None
+
+    previous_user_message, previous_agent_response = last_turn
+    _, previous_metadata = classify_and_plan(previous_user_message)
+
+    if previous_metadata.get("reason") != "missing_required_arguments":
+        return None
+
+    previous_intent = previous_metadata.get("intent")
+    if not isinstance(previous_intent, str):
+        return None
+
+    expected_prompt = build_clarification_response(previous_intent, previous_user_message)
+    if not expected_prompt or previous_agent_response != expected_prompt:
+        return None
+
+    merged_message = f"{previous_user_message} {user_message}".strip()
+    plan, merged_metadata = classify_and_plan(merged_message)
+    if plan is None:
+        if merged_metadata.get("reason") == "missing_required_arguments":
+            clarification = build_clarification_response(previous_intent, merged_message)
+            if clarification:
+                return {
+                    "type": "conversation",
+                    "response": clarification,
+                    "intent_detection": {
+                        **merged_metadata,
+                        "source": "semantic_followup_clarification",
+                        "merged_from": previous_user_message,
+                    },
+                }
+        return None
+
+    plan["intent_detection"] = {
+        **merged_metadata,
+        "source": "semantic_followup",
+        "merged_from": previous_user_message,
+    }
+    return plan
 
 
 def fallback_planner(user_message: str, chat_history: str = ""):
@@ -192,7 +248,7 @@ def fallback_planner(user_message: str, chat_history: str = ""):
     return None
 
 
-def extract_item_from_message(user_msg: str, full_msg: str, before_keyword: str = None) -> str:
+def extract_item_from_message(user_msg: str, full_msg: str, before_keyword: str | None = None) -> str:
     if before_keyword:
         item_match = re.search(rf"(?:for|of)\s+([a-zA-Z0-9\s]+?)\s+{before_keyword}", full_msg)
         if item_match:
@@ -229,6 +285,11 @@ def _attach_intent_metadata(plan, intent_metadata, source: str, elapsed_ms: floa
 
 
 def generate_plan(user_message: str, chat_history: str = ""):
+    continued_plan = _continue_clarification(user_message, chat_history)
+    if continued_plan is not None:
+        print("[Semantic] Completed prior clarification - skipping LLM.")
+        return continued_plan
+
     t0 = time.time()
     semantic_plan, intent_metadata = classify_and_plan(user_message)
     elapsed_ms = (time.time() - t0) * 1000
@@ -236,6 +297,25 @@ def generate_plan(user_message: str, chat_history: str = ""):
     if semantic_plan is not None:
         print(f"[Semantic] Resolved in {elapsed_ms:.1f}ms - skipping LLM.")
         return _attach_intent_metadata(semantic_plan, intent_metadata, "semantic", elapsed_ms)
+
+    if intent_metadata.get("reason") == "missing_required_arguments":
+        intent_name = intent_metadata.get("intent")
+        clarification = (
+            build_clarification_response(intent_name, user_message)
+            if isinstance(intent_name, str)
+            else None
+        )
+        if clarification:
+            print(f"[Semantic] Clarification needed ({elapsed_ms:.1f}ms) - skipping LLM.")
+            return {
+                "type": "conversation",
+                "response": clarification,
+                "intent_detection": {
+                    **intent_metadata,
+                    "source": "semantic_clarification",
+                    "latency_ms": round(elapsed_ms, 2),
+                },
+            }
 
     print(f"[Semantic] No confident match ({elapsed_ms:.1f}ms) - falling back to LLM.")
 
