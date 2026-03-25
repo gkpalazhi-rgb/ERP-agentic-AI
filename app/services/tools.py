@@ -1,11 +1,89 @@
 import os
+import re
 from datetime import date, datetime
+from difflib import SequenceMatcher
 
 from app.models.inventory import Inventory
 from app.models.leave_application import LeaveApplication
 from app.models.purchase_order import PurchaseOrder
 from app.models.user import User
 from app.models.vendor import Vendor
+
+
+_ITEM_QUERY_STOP_WORDS = {
+    "a", "an", "and", "check", "create", "for", "get", "have", "how",
+    "i", "in", "inventory", "is", "item", "items", "left", "make", "need",
+    "of", "order", "please", "po", "purchase", "quantity", "reorder", "show",
+    "stock", "the", "to", "want",
+}
+
+
+def _normalize_item_text(value: str) -> str:
+    return re.sub(r"\s+", " ", re.sub(r"[^a-z0-9]+", " ", (value or "").lower())).strip()
+
+
+def _tokenize_item_text(value: str) -> list[str]:
+    return [
+        token for token in _normalize_item_text(value).split()
+        if token and token not in _ITEM_QUERY_STOP_WORDS
+    ]
+
+
+def _resolve_inventory_item(item: str, db):
+    normalized_query = _normalize_item_text(item)
+    query_tokens = _tokenize_item_text(item)
+    if not normalized_query:
+        return None
+
+    exact_item = db.query(Inventory).filter(Inventory.item_name.ilike(item.strip())).first()
+    if exact_item:
+        return exact_item
+
+    inventory_items = db.query(Inventory).all()
+    best_match = None
+    best_score = 0.0
+
+    for inventory_item in inventory_items:
+        item_name = inventory_item.item_name or ""
+        normalized_name = _normalize_item_text(item_name)
+        if not normalized_name:
+            continue
+
+        if normalized_name == normalized_query:
+            return inventory_item
+
+        name_tokens = set(_tokenize_item_text(item_name))
+        common_tokens = set(query_tokens) & name_tokens
+        token_overlap = (len(common_tokens) / len(query_tokens)) if query_tokens else 0.0
+        prefix_overlap = 0.0
+        if query_tokens:
+            prefix_hits = sum(
+                1
+                for query_token in query_tokens
+                if any(
+                    name_token.startswith(query_token) or query_token.startswith(name_token)
+                    for name_token in name_tokens
+                )
+            )
+            prefix_overlap = prefix_hits / len(query_tokens)
+
+        similarity = SequenceMatcher(None, normalized_query, normalized_name).ratio()
+
+        if normalized_query in normalized_name or normalized_name in normalized_query:
+            score = 0.9 + (0.05 * token_overlap) + (0.05 * similarity)
+        elif common_tokens:
+            score = (0.65 * token_overlap) + (0.2 * prefix_overlap) + (0.15 * similarity)
+        else:
+            score = 0.35 * similarity
+
+        if score > best_score:
+            best_match = inventory_item
+            best_score = score
+
+    if best_match and best_score >= 0.72:
+        return best_match
+
+    return None
 
 
 # Check inventory
@@ -23,6 +101,11 @@ def get_inventory(item: str, db, user_id: int = 1):
     if not products:
         # Also try a direct substring match if word split was too strict
         products = db.query(Inventory).filter(Inventory.item_name.ilike(f"%{item.lower()}%")).all()
+
+    if not products:
+        resolved_item = _resolve_inventory_item(item, db)
+        if resolved_item:
+            products = [resolved_item]
 
     if not products:
         return {
@@ -72,14 +155,25 @@ def _generate_po_id(item_code: str, db) -> str:
 def _resolve_purchase_order(po_id: str | int, db):
     """
     Finds a purchase order by the new string PO ID first, then falls back
-    to the legacy numeric primary key for backward compatibility.
+    to the legacy numeric primary key, then tries a prefix match.
     """
-    po = db.query(PurchaseOrder).filter(PurchaseOrder.po_id == str(po_id)).first()
+    po_id_str = str(po_id).strip()
+
+    # 1. Exact match on po_id column
+    po = db.query(PurchaseOrder).filter(PurchaseOrder.po_id == po_id_str).first()
     if po:
         return po
 
+    # 2. Prefix / partial match (e.g. user says "260324" and the full ID is "260324-FG00639-001")
+    po = db.query(PurchaseOrder).filter(
+        PurchaseOrder.po_id.ilike(f"{po_id_str}%")
+    ).first()
+    if po:
+        return po
+
+    # 3. Legacy numeric primary key fallback
     try:
-        numeric_id = int(str(po_id))
+        numeric_id = int(po_id_str)
     except (TypeError, ValueError):
         return None
 
@@ -91,9 +185,8 @@ def create_purchase_order(item: str, quantity: int, db, vendor_name: str = "defa
     from app.services.email_service import send_po_email
 
     # --- Resolve item_code from inventory ---
-    inv_item = db.query(Inventory).filter(
-        Inventory.item_name.ilike(f"%{item.lower()}%")
-    ).first()
+    inv_item = _resolve_inventory_item(item, db)
+    resolved_item_name = inv_item.item_name if inv_item and inv_item.item_name else item.lower()
     item_code = inv_item.item_code if inv_item and inv_item.item_code else f"GEN-{item[:3].upper()}"
 
     # --- Generate dynamic PO ID ---
@@ -101,7 +194,7 @@ def create_purchase_order(item: str, quantity: int, db, vendor_name: str = "defa
 
     purchase_order = PurchaseOrder(
         po_id=po_id_str,
-        item_name=item.lower(),
+        item_name=resolved_item_name,
         item_code=item_code,
         quantity=quantity,
         vendor=vendor_name
@@ -122,10 +215,10 @@ def create_purchase_order(item: str, quantity: int, db, vendor_name: str = "defa
     if not vendor_record and vendor_name == "default_vendor":
         # If no vendor specified, try finding one that supplies this item
         vendor_record = db.query(Vendor).filter(
-            Vendor.item_name.ilike(f"%{item}%")
+            Vendor.item_name.ilike(f"%{resolved_item_name}%")
         ).first()
         if vendor_record:
-            print(f"[PO EMAIL] Matched vendor '{vendor_record.vendor_name}' by item '{item}'")
+            print(f"[PO EMAIL] Matched vendor '{vendor_record.vendor_name}' by item '{resolved_item_name}'")
 
     print(f"[PO EMAIL] Vendor lookup for '{vendor_name}' / item '{item}': "
           f"{'Found ' + vendor_record.vendor_name + ' (email: ' + str(vendor_record.email) + ')' if vendor_record else 'NOT FOUND'}")
@@ -134,8 +227,8 @@ def create_purchase_order(item: str, quantity: int, db, vendor_name: str = "defa
         email_result = send_po_email(
             vendor_name=vendor_record.vendor_name,
             vendor_email=vendor_record.email,
-            po_id=purchase_order.po_id,
-            item_name=item,
+            po_id=po_id_str,
+            item_name=resolved_item_name,
             quantity=quantity
         )
     elif vendor_record and not vendor_record.email:
@@ -143,7 +236,7 @@ def create_purchase_order(item: str, quantity: int, db, vendor_name: str = "defa
 
     return {
         "status": "PO Created",
-        "item": item,
+        "item": resolved_item_name,
         "item_code": item_code,
         "quantity": quantity,
         "vendor_name": vendor_name,
@@ -153,14 +246,17 @@ def create_purchase_order(item: str, quantity: int, db, vendor_name: str = "defa
 
 
 # Add vendor
-def add_vendor(vendor_name: str, item_name: str, price: float, db, email: str = None, user_id: int = 1):
+def add_vendor(vendor_name: str, item_name: str, price: float, db, email: str | None = None, user_id: int = 1):
 
-    vendor = Vendor(
-        vendor_name=vendor_name,
-        item_name=item_name,
-        price=price,
-        email=email
-    )
+    vendor_kwargs = {
+        "vendor_name": vendor_name,
+        "item_name": item_name,
+        "price": price,
+    }
+    if email is not None:
+        vendor_kwargs["email"] = email
+
+    vendor = Vendor(**vendor_kwargs)
 
     db.add(vendor)
     db.commit()
@@ -174,7 +270,7 @@ def add_vendor(vendor_name: str, item_name: str, price: float, db, email: str = 
 
 
 # Update vendor details (especially email)
-def update_vendor(vendor_name: str, db, email: str = None, price: float = None, user_id: int = 1):
+def update_vendor(vendor_name: str, db, email: str | None = None, price: float | None = None, user_id: int = 1):
     vendor = db.query(Vendor).filter(
         Vendor.vendor_name.ilike(f"%{vendor_name}%")
     ).first()
@@ -340,7 +436,7 @@ def apply_leave(reason: str, leave_date: str, leave_type: str, db, user_id: int 
         return {"error": str(e)}
 
 # Update inventory when goods arrive
-def update_inventory_stock(item: str, quantity: int, db, po_id: str = None, user_id: int = 1):
+def update_inventory_stock(item: str, quantity: int, db, po_id=None, user_id: int = 1):
     """
     Increments inventory quantity for an item. 
     Cross-references with purchase_orders to prevent 'fake' stock additions.

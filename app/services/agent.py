@@ -1,5 +1,6 @@
 import difflib
 import json
+import os
 import re
 import time
 from datetime import datetime, timedelta
@@ -7,9 +8,13 @@ from datetime import datetime, timedelta
 import requests
 
 from app.services.intent_classifier import build_clarification_response, classify_and_plan
+from app.services.semantic_router import get_agent_router
 from app.services.tool_registry import TOOL_REGISTRY
 
 OLLAMA_URL = "http://localhost:11434/api/generate"
+OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "llama3.2:3b")
+OLLAMA_TIMEOUT_SECONDS = int(os.getenv("OLLAMA_TIMEOUT_SECONDS", "25"))
+OLLAMA_FALLBACK_TIMEOUT_SECONDS = int(os.getenv("OLLAMA_FALLBACK_TIMEOUT_SECONDS", "12"))
 
 
 def build_tool_prompt():
@@ -42,6 +47,34 @@ def extract_json(text):
         print("JSON extraction error:", exc)
 
     return None
+
+
+def _compact_chat_history(chat_history: str, max_chars: int = 220) -> str:
+    last_turn = _get_last_turn(chat_history)
+    if not last_turn:
+        return "None"
+
+    user_message, agent_message = last_turn
+    compact = f"User: {user_message[:110]} | Agent: {agent_message[:110]}"
+    return compact[:max_chars]
+
+
+def _build_planner_prompt(user_message: str, chat_history: str) -> str:
+    compact_history = _compact_chat_history(chat_history)
+    today = datetime.now().strftime("%Y-%m-%d (%A)")
+
+    return (
+        "You are an ERP planner. Return only one JSON object. "
+        "No markdown. No explanation. Keep values short. "
+        "Use {'type':'conversation','response':'...'} for casual chat. "
+        "Use {'type':'action','steps':[...]} for ERP actions. "
+        "Allowed tools: get_inventory(item), create_purchase_order(item, quantity, vendor_name), "
+        "get_po_status(po_id), generate_purchase_invoice(po_id), get_vendors(), add_vendor(vendor_name, item_name, price, email), "
+        "update_vendor(vendor_name, email, price), apply_leave(reason, leave_date, leave_type), update_inventory_stock(item, quantity, po_id). "
+        "Prefer a single tool step unless inventory check must be followed by a conditional reorder. "
+        "Fix minor typos in item names and IDs. "
+        f"Date: {today}. Context: {compact_history}. User: {user_message}"
+    )
 
 
 def _get_last_turn(chat_history: str) -> tuple[str, str] | None:
@@ -98,6 +131,31 @@ def _continue_clarification(user_message: str, chat_history: str = ""):
         "merged_from": previous_user_message,
     }
     return plan
+
+
+def _legacy_keyword_logic(user_message: str) -> dict | None:
+    plan, intent_metadata = classify_and_plan(user_message)
+    if plan is not None:
+        return plan
+
+    if intent_metadata.get("reason") == "missing_required_arguments":
+        intent_name = intent_metadata.get("intent")
+        clarification = (
+            build_clarification_response(intent_name, user_message)
+            if isinstance(intent_name, str)
+            else None
+        )
+        if clarification:
+            return {
+                "type": "conversation",
+                "response": clarification,
+                "intent_detection": {
+                    **intent_metadata,
+                    "source": "semantic_clarification",
+                },
+            }
+
+    return fallback_planner(user_message)
 
 
 def fallback_planner(user_message: str, chat_history: str = ""):
@@ -290,74 +348,33 @@ def generate_plan(user_message: str, chat_history: str = ""):
         print("[Semantic] Completed prior clarification - skipping LLM.")
         return continued_plan
 
-    t0 = time.time()
-    semantic_plan, intent_metadata = classify_and_plan(user_message)
-    elapsed_ms = (time.time() - t0) * 1000
+    router = get_agent_router(_legacy_keyword_logic, lambda text: text)
+    router_plan = router.route_plan(user_message)
+    if router_plan is not None:
+        print("[Semantic Router] Resolved before LLM.")
+        return router_plan
 
-    if semantic_plan is not None:
-        print(f"[Semantic] Resolved in {elapsed_ms:.1f}ms - skipping LLM.")
-        return _attach_intent_metadata(semantic_plan, intent_metadata, "semantic", elapsed_ms)
+    elapsed_ms = 0.0
+    intent_metadata = {"reason": "unknown_intent"}
 
-    if intent_metadata.get("reason") == "missing_required_arguments":
-        intent_name = intent_metadata.get("intent")
-        clarification = (
-            build_clarification_response(intent_name, user_message)
-            if isinstance(intent_name, str)
-            else None
-        )
-        if clarification:
-            print(f"[Semantic] Clarification needed ({elapsed_ms:.1f}ms) - skipping LLM.")
-            return {
-                "type": "conversation",
-                "response": clarification,
-                "intent_detection": {
-                    **intent_metadata,
-                    "source": "semantic_clarification",
-                    "latency_ms": round(elapsed_ms, 2),
-                },
-            }
+    print("[Semantic] No confident match - falling back to LLM.")
 
-    print(f"[Semantic] No confident match ({elapsed_ms:.1f}ms) - falling back to LLM.")
-
-    tools_description = build_tool_prompt()
-    today = datetime.now().strftime("%Y-%m-%d (%A)")
-
-    system_prompt = f"""You are an ERP AI assistant for Thaikkattu Mooss Vaidyaratnam (Ayurvedic company). You handle conversation and ERP tasks.
-
-RESPONSE STYLE: Be brief and direct. No filler phrases. Stick to key information only. Do NOT say things like "Hello! I'm happy to help" or "According to our records" or "Let me check". Just give the answer.
-
-ALWAYS return ONLY valid JSON in one of these two formats:
-
-For greetings/chat/questions: {{"type": "conversation", "response": "your short reply"}}
-For ERP tasks: {{"type": "action", "steps": [{{"type": "tool", "name": "TOOL", "args": {{}}}}]}}
-
-Tools: {tools_description}
-
-Conditions can chain steps: {{"type": "condition", "left": "last.quantity", "operator": "<", "right": 10}}
-
-Examples:
-User: "hey how are you" -> {{"type": "conversation", "response": "Hi! How can I help?"}}
-User: "what can you do" -> {{"type": "conversation", "response": "I can check inventory, create purchase orders, view vendors, check PO status, and generate invoices."}}
-User: "check inventory for amber bottle" -> {{"type": "action", "steps": [{{"type": "tool", "name": "get_inventory", "args": {{"item": "amber bottle"}}}}]}}
-User: "create PO for 50 bottles" -> {{"type": "action", "steps": [{{"type": "tool", "name": "create_purchase_order", "args": {{"item": "bottles", "quantity": 50}}}}]}}
-User: "generate invoice for PO 3" -> {{"type": "action", "steps": [{{"type": "tool", "name": "generate_purchase_invoice", "args": {{"po_id": 3}}}}]}}
-User: "I want to apply for leave tomorrow because I'm sick. Full day." -> {{"type": "action", "steps": [{{"type": "tool", "name": "apply_leave", "args": {{"reason": "sick", "leave_date": "2026-03-13", "leave_type": "Full Day"}}}}]}}
-User: "PO of 20 arishtam has arrived" -> {{"type": "action", "steps": [{{"type": "tool", "name": "update_inventory_stock", "args": {{"item": "arishtam", "quantity": 20}}}}]}}
-User: "received 50 amber bottles for PO 5" -> {{"type": "action", "steps": [{{"type": "tool", "name": "update_inventory_stock", "args": {{"item": "amber bottles", "quantity": 50, "po_id": 5}}}}]}}
-
-Chat history: {chat_history if chat_history else "None"}
-Current Date: {today}
-Handle typos. Return ONLY JSON. Keep responses SHORT."""
-
+    system_prompt = _build_planner_prompt(user_message, chat_history)
     payload = {
-        "model": "llama3.2:3b",
-        "prompt": system_prompt + "\nUser: " + user_message + "\nJSON:",
+        "model": OLLAMA_MODEL,
+        "prompt": system_prompt,
         "stream": False,
+        "format": "json",
+        "options": {
+            "temperature": 0,
+            "num_predict": 120,
+            "num_ctx": 1024,
+        },
     }
 
     for attempt in range(2):
         try:
-            response = requests.post(OLLAMA_URL, json=payload, timeout=120)
+            response = requests.post(OLLAMA_URL, json=payload, timeout=OLLAMA_TIMEOUT_SECONDS)
             data = response.json()
             result_text = data.get("response", "")
 
@@ -372,12 +389,11 @@ Handle typos. Return ONLY JSON. Keep responses SHORT."""
             if attempt == 0:
                 print("LLM returned invalid JSON. Retrying with shorter prompt...")
                 payload["prompt"] = (
-                    "Return ONLY a JSON object. No markdown, no explanation. Keep responses SHORT and direct.\n"
-                    f"User said: \"{user_message}\"\n"
-                    "If greeting/casual talk: {\"type\": \"conversation\", \"response\": \"short direct reply\"}\n"
-                    "If ERP task (inventory/order/vendor/invoice): {\"type\": \"action\", \"steps\": [{\"type\": \"tool\", \"name\": \"tool_name\", \"args\": {}}]}\n"
-                    "JSON:"
+                    "Return only valid JSON. "
+                    "Use conversation for chat, action+steps for ERP. "
+                    f"User: {user_message}"
                 )
+                payload["options"]["num_ctx"] = 768
                 continue
 
         except requests.exceptions.ConnectionError:
@@ -387,16 +403,20 @@ Handle typos. Return ONLY JSON. Keep responses SHORT."""
             print("Ollama request timed out. Trying lightweight conversation prompt...")
             try:
                 short_payload = {
-                    "model": "llama3.2:3b",
+                    "model": OLLAMA_MODEL,
                     "prompt": (
-                        f"User says: \"{user_message}\"\n"
-                        "Reply briefly as an ERP assistant in JSON format:\n"
-                        "{\"type\": \"conversation\", \"response\": \"your reply\"}\n"
-                        "JSON:"
+                        "Return one JSON object only. "
+                        f"User: {user_message}"
                     ),
                     "stream": False,
+                    "format": "json",
+                    "options": {
+                        "temperature": 0,
+                        "num_predict": 80,
+                        "num_ctx": 512,
+                    },
                 }
-                resp2 = requests.post(OLLAMA_URL, json=short_payload, timeout=90)
+                resp2 = requests.post(OLLAMA_URL, json=short_payload, timeout=OLLAMA_FALLBACK_TIMEOUT_SECONDS)
                 data2 = resp2.json()
                 result2 = data2.get("response", "")
                 print("Short prompt LLM OUTPUT:", result2)

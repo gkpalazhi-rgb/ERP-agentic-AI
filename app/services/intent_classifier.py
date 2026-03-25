@@ -714,6 +714,8 @@ def _extract_item(text: str) -> str:
         r"(?:buy|order|purchase|procure|restock|reorder|receive|received|deliver|delivered|arrived|update)\s+(?:\d+\s+)?([a-z][a-z\s-]+)",
     )
 
+    phrase_candidates: list[str] = []
+
     # --- 1. Regex phrase capture around common ERP verbs ---
     for pattern in item_patterns:
         match = re.search(pattern, normalized_text, re.I)
@@ -725,8 +727,11 @@ def _extract_item(text: str) -> str:
             found = cache.find_substring(phrase)
             if found:
                 return found
+            found = cache.find_fuzzy(phrase)
+            if found:
+                return found
             if len(phrase) >= 3:
-                return phrase
+                phrase_candidates.append(phrase)
 
     # --- 2.  Substring scan of the full text against the item cache ---
     found = cache.find_substring(normalized_text)
@@ -737,6 +742,14 @@ def _extract_item(text: str) -> str:
     found = cache.find_fuzzy(normalized_text)
     if found:
         return found
+
+    for phrase in phrase_candidates:
+        found = cache.find_fuzzy(phrase)
+        if found:
+            return found
+
+    if phrase_candidates:
+        return phrase_candidates[0]
 
     # --- 4.  Last-resort: try to pull any remaining 2+ char noun ---
     # Remove common ERP verbs/prepositions and grab the first remaining word
