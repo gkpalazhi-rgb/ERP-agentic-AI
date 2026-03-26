@@ -215,7 +215,7 @@ def create_purchase_order(item: str, quantity: int, db, vendor_name: str = "defa
     if not vendor_record and vendor_name == "default_vendor":
         # If no vendor specified, try finding one that supplies this item
         vendor_record = db.query(Vendor).filter(
-            Vendor.item_name.ilike(f"%{resolved_item_name}%")
+            Vendor.item_category.ilike(f"%{resolved_item_name}%")
         ).first()
         if vendor_record:
             print(f"[PO EMAIL] Matched vendor '{vendor_record.vendor_name}' by item '{resolved_item_name}'")
@@ -246,12 +246,12 @@ def create_purchase_order(item: str, quantity: int, db, vendor_name: str = "defa
 
 
 # Add vendor
-def add_vendor(vendor_name: str, item_name: str, price: float, db, email: str | None = None, user_id: int = 1):
-
+def add_vendor(vendor_name: str, vendor_code: str, item_category: str, location: str, db, email: str | None = None, user_id: int = 1):
     vendor_kwargs = {
+        "vendor_code": vendor_code,
         "vendor_name": vendor_name,
-        "item_name": item_name,
-        "price": price,
+        "location": location,
+        "item_category": item_category,
     }
     if email is not None:
         vendor_kwargs["email"] = email
@@ -264,13 +264,13 @@ def add_vendor(vendor_name: str, item_name: str, price: float, db, email: str | 
 
     return {
         "status": "Vendor Added",
-        "vendor_id": vendor.id,
+        "vendor_code": vendor.vendor_code,
         "email": email
     }
 
 
 # Update vendor details (especially email)
-def update_vendor(vendor_name: str, db, email: str | None = None, price: float | None = None, user_id: int = 1):
+def update_vendor(vendor_name: str, db, email: str | None = None, user_id: int = 1):
     vendor = db.query(Vendor).filter(
         Vendor.vendor_name.ilike(f"%{vendor_name}%")
     ).first()
@@ -282,12 +282,9 @@ def update_vendor(vendor_name: str, db, email: str | None = None, price: float |
     if email is not None:
         vendor.email = email
         updated_fields.append(f"email → {email}")
-    if price is not None:
-        vendor.price = price
-        updated_fields.append(f"price → {price}")
 
     if not updated_fields:
-        return {"error": "No fields to update. Provide email or price."}
+        return {"error": "No fields to update. Provide email."}
 
     db.commit()
     db.refresh(vendor)
@@ -306,10 +303,10 @@ def get_vendors(db, user_id: int = 1):
 
     return [
         {
-            "id": v.id,
+            "vendor_code": v.vendor_code,
             "vendor_name": v.vendor_name,
-            "item_name": v.item_name,
-            "price": v.price,
+            "location": v.location,
+            "item_category": v.item_category,
             "email": v.email
         }
         for v in vendors
@@ -322,32 +319,15 @@ def get_po_status(po_id: str, db, user_id: int = 1):
     if not po:
         return {"error": f"Purchase order with ID '{po_id}' not found."}
 
-    # Try to find the vendor's price to calculate cost
-    # Strategy: vendor+item match → item-only vendor match → inventory MRP
+    # Try to find the item's MRP to calculate cost
     price = 0.0
 
-    # 1. Exact match: vendor name + item name
-    vendor = db.query(Vendor).filter(
-        Vendor.vendor_name.ilike(f"%{po.vendor}%"),
-        Vendor.item_name.ilike(f"%{po.item_name}%")
+    # Fallback: use inventory MRP
+    inv_item = db.query(Inventory).filter(
+        Inventory.item_name.ilike(f"%{po.item_name}%")
     ).first()
-
-    if vendor and vendor.price:
-        price = vendor.price
-    else:
-        # 2. Fallback: any vendor that supplies this item
-        vendor_by_item = db.query(Vendor).filter(
-            Vendor.item_name.ilike(f"%{po.item_name}%")
-        ).first()
-        if vendor_by_item and vendor_by_item.price:
-            price = vendor_by_item.price
-        else:
-            # 3. Fallback: use inventory MRP
-            inv_item = db.query(Inventory).filter(
-                Inventory.item_name.ilike(f"%{po.item_name}%")
-            ).first()
-            if inv_item and inv_item.mrp:
-                price = inv_item.mrp
+    if inv_item and inv_item.mrp:
+        price = inv_item.mrp
 
     total_cost = price * po.quantity if price else 0.0
 

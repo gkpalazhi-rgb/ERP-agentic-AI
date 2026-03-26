@@ -22,22 +22,22 @@ TOOL_REGISTRY = {
 
     "add_vendor": {
         "function": add_vendor,
-        "description": "Add a new vendor with item name, price, and optional email",
+        "description": "Add a new vendor with vendor code, item category, location, and optional email",
         "args": {
             "vendor_name": "string",
-            "item_name": "string",
-            "price": "number",
+            "vendor_code": "string",
+            "item_category": "string",
+            "location": "string",
             "email": "string (optional)"
         }
     },
 
     "update_vendor": {
         "function": update_vendor,
-        "description": "Update a vendor's email or price",
+        "description": "Update a vendor's email",
         "args": {
             "vendor_name": "string",
-            "email": "string (optional)",
-            "price": "number (optional)"
+            "email": "string"
         }
     },
 

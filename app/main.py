@@ -1,5 +1,6 @@
 from fastapi import FastAPI, Depends, Query, Header, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 from sqlalchemy import func
@@ -21,6 +22,8 @@ from app.services.agent import generate_plan
 from app.services.auth import register_user, login_user, get_current_user, hash_password
 
 app = FastAPI()
+
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="auth/login")
 
 # Enable CORS
 app.add_middleware(
@@ -57,6 +60,9 @@ def run_migrations():
         add_column_if_missing("purchase_orders", "item_code", "VARCHAR")
         add_column_if_missing("leave_applications", "username", "VARCHAR")
         add_column_if_missing("vendors", "email", "VARCHAR")
+        add_column_if_missing("vendors", "item_category", "VARCHAR")
+        add_column_if_missing("vendors", "vendor_code", "VARCHAR")
+        add_column_if_missing("vendors", "location", "VARCHAR")
         add_column_if_missing("inventory", "mrp", "FLOAT")
         add_column_if_missing("users", "password_hash", "VARCHAR")
         add_column_if_missing("users", "created_at", "TIMESTAMP")
@@ -480,8 +486,19 @@ def list_purchase_orders(
 # -------------------------------
 # Leave Management
 # -------------------------------
+def get_current_active_user(token: str = Depends(oauth2_scheme), db: Session = Depends(get_db)):
+    user = get_current_user(db, token)
+    if not user:
+        raise HTTPException(status_code=401, detail="Invalid token")
+    return user
+
+def get_admin_user(current_user: User = Depends(get_current_active_user)):
+    if current_user.role not in ("admin", "administrator"):
+        raise HTTPException(status_code=403, detail="Not enough privileges")
+    return current_user
+
 @app.get("/leaves")
-def list_all_leaves(db: Session = Depends(get_db)):
+def list_all_leaves(db: Session = Depends(get_db), current_user: User = Depends(get_admin_user)):
     """List all leave applications (for admin view)."""
     leaves = db.query(LeaveApplication).order_by(
         LeaveApplication.created_at.desc()
@@ -503,8 +520,10 @@ def list_all_leaves(db: Session = Depends(get_db)):
 
 
 @app.get("/leaves/{user_id}")
-def list_leaves(user_id: int, db: Session = Depends(get_db)):
+def list_leaves(user_id: int, db: Session = Depends(get_db), current_user: User = Depends(get_current_active_user)):
     """List leave applications for a specific user."""
+    if current_user.id != user_id and current_user.role not in ("admin", "administrator"):
+        raise HTTPException(status_code=403, detail="Not authorized")
     leaves = db.query(LeaveApplication).filter(
         LeaveApplication.user_id == user_id
     ).order_by(LeaveApplication.created_at.desc()).all()
@@ -533,6 +552,7 @@ def update_leave_status(
     leave_id: int,
     body: LeaveStatusUpdate,
     db: Session = Depends(get_db),
+    current_user: User = Depends(get_admin_user)
 ):
     """Approve or reject a leave application."""
     if body.status not in ("Approved", "Rejected"):
@@ -563,10 +583,10 @@ def list_vendors(db: Session = Depends(get_db)):
     vendors = db.query(Vendor).order_by(Vendor.vendor_name).all()
     return [
         {
-            "id": v.id,
+            "vendor_code": v.vendor_code,
             "vendor_name": v.vendor_name,
-            "item_name": v.item_name,
-            "price": v.price,
+            "location": v.location,
+            "item_category": v.item_category,
             "email": v.email,
         }
         for v in vendors

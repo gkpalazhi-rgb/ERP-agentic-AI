@@ -49,14 +49,21 @@ def extract_json(text):
     return None
 
 
-def _compact_chat_history(chat_history: str, max_chars: int = 220) -> str:
-    last_turn = _get_last_turn(chat_history)
-    if not last_turn:
+def _compact_chat_history(chat_history: str, max_chars: int = 500) -> str:
+    if not chat_history.strip():
         return "None"
 
-    user_message, agent_message = last_turn
-    compact = f"User: {user_message[:110]} | Agent: {agent_message[:110]}"
-    return compact[:max_chars]
+    matches = re.findall(r"User:\s*(.*?)\nAgent:\s*(.*?)(?=\nUser:|$)", chat_history, re.S)
+    if not matches:
+        return "None"
+
+    # Keep up to last 3 turns for better multi-turn context
+    recent_turns = matches[-3:]
+    compact = "Previous context:\n"
+    for idx, (user_msg, agent_msg) in enumerate(recent_turns):
+        compact += f"Turn {idx+1}: User: {user_msg[:120]} | Agent: {agent_msg[:120]}\n"
+        
+    return compact.strip()[:max_chars]
 
 
 def _build_planner_prompt(user_message: str, chat_history: str) -> str:

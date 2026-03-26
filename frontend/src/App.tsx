@@ -1,13 +1,14 @@
 import { useState, useEffect, useRef } from 'react';
 import {
   Send, Plus, MessageSquare, Bot, Trash2, LogOut,
-  LayoutDashboard, Package, ShoppingCart, MessageCircle, CalendarDays
+  LayoutDashboard, Package, ShoppingCart, MessageCircle, CalendarDays, Users
 } from 'lucide-react';
 import LoginPage from './LoginPage';
 import DashboardPage from './DashboardPage';
 import InventoryPage from './InventoryPage';
 import PurchaseOrdersPage from './PurchaseOrdersPage';
 import LeavesPage from './LeavesPage';
+import VendorsPage from './VendorsPage';
 
 interface Message {
   id: number;
@@ -28,7 +29,7 @@ interface AuthUser {
   role: string;
 }
 
-type Page = 'chat' | 'dashboard' | 'inventory' | 'purchase-orders' | 'leaves';
+type Page = 'chat' | 'dashboard' | 'inventory' | 'purchase-orders' | 'leaves' | 'vendors';
 
 function App() {
   // Auth state
@@ -229,6 +230,7 @@ function App() {
     { key: 'chat', label: 'AI Chat', icon: MessageCircle },
     { key: 'inventory', label: 'Inventory', icon: Package },
     { key: 'purchase-orders', label: 'Orders', icon: ShoppingCart },
+    { key: 'vendors', label: 'Vendors', icon: Users },
     { key: 'leaves', label: 'Leaves', icon: CalendarDays },
   ];
 
@@ -344,6 +346,7 @@ function App() {
       {currentPage === 'dashboard' && <DashboardPage />}
       {currentPage === 'inventory' && <InventoryPage />}
       {currentPage === 'purchase-orders' && <PurchaseOrdersPage />}
+      {currentPage === 'vendors' && <VendorsPage />}
       {currentPage === 'leaves' && <LeavesPage userRole={user.role} userId={user.user_id} />}
       {currentPage === 'chat' && (
         <main className="flex-1 flex flex-col">

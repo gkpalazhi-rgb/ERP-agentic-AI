@@ -28,7 +28,8 @@ export default function LeavesPage({ userRole, userId }: LeavesPageProps) {
   const fetchLeaves = () => {
     setLoading(true);
     const url = isAdmin ? '/leaves' : `/leaves/${userId}`;
-    fetch(url)
+    const token = localStorage.getItem('erp_token');
+    fetch(url, { headers: { Authorization: `Bearer ${token}` } })
       .then((r) => r.json())
       .then((data) => { setLeaves(data); setLoading(false); })
       .catch(() => setLoading(false));
@@ -41,9 +42,13 @@ export default function LeavesPage({ userRole, userId }: LeavesPageProps) {
   const handleStatusUpdate = async (leaveId: number, newStatus: 'Approved' | 'Rejected') => {
     setActionLoading(leaveId);
     try {
+      const token = localStorage.getItem('erp_token');
       const res = await fetch(`/leaves/${leaveId}/status`, {
         method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
         body: JSON.stringify({ status: newStatus }),
       });
 

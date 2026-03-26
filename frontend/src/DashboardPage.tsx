@@ -3,6 +3,7 @@ import {
   Package, ShoppingCart, Users, CalendarDays, AlertTriangle,
   TrendingUp, Activity, ArrowUpRight, ArrowDownRight
 } from 'lucide-react';
+import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip as RechartsTooltip, BarChart, Bar, XAxis, CartesianGrid } from 'recharts';
 
 interface DashboardStats {
   inventory: { total_items: number; total_quantity: number; low_stock: number };
@@ -76,8 +77,6 @@ export default function DashboardPage() {
   ];
 
   const poTotal = stats.purchase_orders.total || 1;
-  const deliveredPct = Math.round((stats.purchase_orders.delivered / poTotal) * 100);
-  const pendingPct = 100 - deliveredPct;
 
   const toolNameMap: Record<string, string> = {
     plan_execution: 'Plan Executed',
@@ -122,28 +121,30 @@ export default function DashboardPage() {
           <div className="bg-white rounded-2xl p-6 shadow-sm border border-[#F0E0CC]">
             <h2 className="text-sm font-semibold text-[#2D1B18] mb-5">Purchase Order Status</h2>
             <div className="flex items-center gap-6">
-              {/* Visual bar */}
-              <div className="flex-1">
-                <div className="h-4 rounded-full bg-[#F5E6D3] overflow-hidden flex">
-                  <div
-                    className="h-full bg-gradient-to-r from-[#4B9B44] to-[#6BC060] rounded-l-full transition-all"
-                    style={{ width: `${deliveredPct}%` }}
-                  />
-                  <div
-                    className="h-full bg-gradient-to-r from-[#D4A040] to-[#E8B84C] rounded-r-full transition-all"
-                    style={{ width: `${pendingPct}%` }}
-                  />
-                </div>
-                <div className="flex justify-between mt-3">
-                  <div className="flex items-center gap-2">
-                    <div className="w-3 h-3 rounded-full bg-[#4B9B44]" />
-                    <span className="text-xs text-[#6B5744]">Delivered ({stats.purchase_orders.delivered})</span>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <div className="w-3 h-3 rounded-full bg-[#D4A040]" />
-                    <span className="text-xs text-[#6B5744]">Pending ({stats.purchase_orders.pending})</span>
-                  </div>
-                </div>
+              {/* Pie Chart */}
+              <div className="flex-1 h-32 relative">
+                <ResponsiveContainer width="100%" height="100%">
+                  <PieChart>
+                    <Pie
+                      data={[
+                        { name: 'Delivered', value: stats.purchase_orders.delivered },
+                        { name: 'Pending', value: stats.purchase_orders.pending }
+                      ]}
+                      innerRadius={35}
+                      outerRadius={60}
+                      paddingAngle={5}
+                      dataKey="value"
+                      stroke="none"
+                    >
+                      <Cell fill="#4B9B44" />
+                      <Cell fill="#D4A040" />
+                    </Pie>
+                    <RechartsTooltip 
+                      contentStyle={{ borderRadius: '12px', border: 'none', boxShadow: '0 4px 12px rgba(0,0,0,0.1)', fontSize: '12px' }}
+                      itemStyle={{ color: '#2D1B18', fontWeight: 600 }}
+                    />
+                  </PieChart>
+                </ResponsiveContainer>
               </div>
               {/* Big number */}
               <div className="text-center px-4">
@@ -178,15 +179,25 @@ export default function DashboardPage() {
               </div>
             )}
 
-            <div className="mt-4 grid grid-cols-2 gap-3">
-              <div className="p-3 rounded-xl bg-[#FAF0E1] text-center">
-                <p className="text-2xl font-bold text-[#2D1B18]">{stats.inventory.total_items}</p>
-                <p className="text-xs text-[#8B7355]">SKUs</p>
-              </div>
-              <div className="p-3 rounded-xl bg-[#FAF0E1] text-center">
-                <p className="text-2xl font-bold text-[#2D1B18]">{(stats.inventory.total_quantity / 1000).toFixed(0)}k</p>
-                <p className="text-xs text-[#8B7355]">Units</p>
-              </div>
+            <div className="mt-4 h-32 w-full">
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={[
+                  { name: 'Healthy', items: stats.inventory.total_items - stats.inventory.low_stock },
+                  { name: 'Low Stock', items: stats.inventory.low_stock }
+                ]}>
+                  <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#E8D8C8" />
+                  <XAxis dataKey="name" tick={{ fontSize: 10, fill: '#8B7355' }} axisLine={false} tickLine={false} />
+                  <RechartsTooltip 
+                      cursor={{ fill: '#FAF0E1' }}
+                      contentStyle={{ borderRadius: '12px', border: 'none', boxShadow: '0 4px 12px rgba(0,0,0,0.1)', fontSize: '12px' }}
+                      itemStyle={{ color: '#2D1B18', fontWeight: 600 }}
+                  />
+                  <Bar dataKey="items" radius={[4, 4, 0, 0]}>
+                    <Cell fill="#4B9B44" />
+                    <Cell fill="#E53E3E" />
+                  </Bar>
+                </BarChart>
+              </ResponsiveContainer>
             </div>
           </div>
         </div>
