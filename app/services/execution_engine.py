@@ -1,9 +1,34 @@
+import json
 import uuid
 from app.services.tool_registry import TOOL_REGISTRY
 from app.models.erp_logs import ERPAPILog
+from app.models.user import User
+from app.models.vendor import Vendor
 
 
-def execute_plan(plan: dict, db, user_id: int = 1):
+READ_ONLY_TOOLS = {"get_inventory", "get_po_status", "get_vendors", "generate_purchase_invoice"}
+EMPLOYEE_ALLOWED_TOOLS = {
+    "get_inventory",
+    "create_purchase_order",
+    "get_po_status",
+    "generate_purchase_invoice",
+    "apply_leave",
+    "update_inventory_stock",
+    "get_vendors",
+}
+ADMIN_ALLOWED_TOOLS = set(TOOL_REGISTRY.keys())
+
+
+def _allowed_tools_for_role(role: str) -> set[str]:
+    role_name = (role or "").strip().lower()
+    if role_name in {"admin", "administrator"}:
+        return ADMIN_ALLOWED_TOOLS
+    if role_name in {"employee", "staff", "user"}:
+        return EMPLOYEE_ALLOWED_TOOLS
+    return READ_ONLY_TOOLS
+
+
+def execute_plan(plan: dict, db, user_id: int = 1, user_role: str | None = None):
 
     if not isinstance(plan, dict) or "steps" not in plan:
         return "Invalid execution plan."
@@ -14,6 +39,13 @@ def execute_plan(plan: dict, db, user_id: int = 1):
     plan_id = str(uuid.uuid4())
     last_result = None
     context = {}
+
+    current_user = db.query(User).filter(User.id == user_id).first()
+    if not current_user:
+        return "Unauthorized: user not found."
+
+    effective_role = user_role or current_user.role or "employee"
+    allowed_tools = _allowed_tools_for_role(effective_role)
 
     for index, step in enumerate(plan["steps"]):
 
@@ -28,7 +60,65 @@ def execute_plan(plan: dict, db, user_id: int = 1):
             if tool_name not in TOOL_REGISTRY:
                 return f"Unknown tool: {tool_name}"
 
+            if tool_name not in allowed_tools:
+                db.add(
+                    ERPAPILog(
+                        tool_name=tool_name,
+                        request_payload=json.dumps(
+                            {
+                                "plan_id": plan_id,
+                                "step_index": index,
+                                "user_id": user_id,
+                                "role": effective_role,
+                                "args": args,
+                                "reason": "role_blocked",
+                            },
+                            default=str,
+                        ),
+                        response_status="DENIED",
+                        plan_id=plan_id,
+                        step_index=index,
+                    )
+                )
+                db.commit()
+                return (
+                    f"Authorization failed: role '{effective_role}' cannot execute '{tool_name}'."
+                )
+
             tool_function = TOOL_REGISTRY[tool_name]["function"]
+
+            # ---------- PO creation guardrails ----------
+            if tool_name == "create_purchase_order":
+                po_item = str(args.get("item", "")).strip().lower()
+                po_vendor = str(args.get("vendor_name", "")).strip().lower()
+                _VAGUE_ITEMS = {
+                    "item", "items", "those", "them", "it", "the", "thing",
+                    "that", "these", "one", "ones", "stuff", "order", "last",
+                    "same", "previous", "repeat", "again", "some", "",
+                }
+                if po_item in _VAGUE_ITEMS or len(po_item) <= 2:
+                    return (
+                        f"I couldn't determine which item you want to order. "
+                        f"Please specify the exact item name, e.g. "
+                        f"'create order for 50 amber bottles from MedLife'."
+                    )
+                if po_vendor in {"default_vendor", "default", ""}:
+                    # Fetch vendor list for helpful response
+                    try:
+                        vendors = db.query(Vendor).order_by(Vendor.vendor_name).all()
+                        if vendors:
+                            vendor_lines = "\n".join(
+                                f"  {i+1}. {v.vendor_name}" for i, v in enumerate(vendors)
+                            )
+                            return (
+                                f"Please specify a vendor for this order. "
+                                f"Available vendors:\n{vendor_lines}\n\n"
+                                f"Example: 'order 50 amber bottles from MedLife'"
+                            )
+                    except Exception:
+                        pass
+                    return "Please specify which vendor to place this order with."
+
 
             try:
                 # Format any variable bindings inside args like "{last.po_id}"
@@ -62,8 +152,20 @@ def execute_plan(plan: dict, db, user_id: int = 1):
 
                 log_entry = ERPAPILog(
                     tool_name=tool_name,
-                    request_payload=str(args),
-                    response_status="SUCCESS"
+                    request_payload=json.dumps(
+                        {
+                            "plan_id": plan_id,
+                            "step_index": index,
+                            "user_id": user_id,
+                            "role": effective_role,
+                            "args": formatted_args,
+                            "result_preview": str(result)[:300],
+                        },
+                        default=str,
+                    ),
+                    response_status="SUCCESS",
+                    plan_id=plan_id,
+                    step_index=index,
                 )
 
                 db.add(log_entry)
@@ -73,8 +175,20 @@ def execute_plan(plan: dict, db, user_id: int = 1):
 
                 log_entry = ERPAPILog(
                     tool_name=tool_name,
-                    request_payload=str(args),
-                    response_status="FAILED"
+                    request_payload=json.dumps(
+                        {
+                            "plan_id": plan_id,
+                            "step_index": index,
+                            "user_id": user_id,
+                            "role": effective_role,
+                            "args": args,
+                            "error": str(e),
+                        },
+                        default=str,
+                    ),
+                    response_status="FAILED",
+                    plan_id=plan_id,
+                    step_index=index,
                 )
 
                 db.add(log_entry)

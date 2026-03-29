@@ -1,0 +1,535 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>ERP Agent — Flowcharts</title>
+  <script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800&display=swap" rel="stylesheet" />
+  <style>
+    :root {
+      --bg: #0a0e1a;
+      --surface: #111827;
+      --border: rgba(255,255,255,0.08);
+      --text: #e2e8f0;
+      --muted: #64748b;
+      --accent: #6366f1;
+      --accent2: #8b5cf6;
+    }
+
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: 'Inter', sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      min-height: 100vh;
+    }
+
+    body::before {
+      content: '';
+      position: fixed; inset: 0;
+      background-image:
+        linear-gradient(rgba(99,102,241,0.04) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(99,102,241,0.04) 1px, transparent 1px);
+      background-size: 40px 40px;
+      pointer-events: none; z-index: 0;
+    }
+
+    .page { position: relative; z-index: 1; max-width: 1300px; margin: 0 auto; padding: 48px 24px 80px; }
+
+    header { text-align: center; margin-bottom: 48px; }
+    .badge {
+      display: inline-flex; align-items: center; gap: 6px;
+      background: rgba(99,102,241,0.15); border: 1px solid rgba(99,102,241,0.3);
+      border-radius: 999px; padding: 4px 14px; font-size: 12px;
+      color: #a5b4fc; margin-bottom: 14px; letter-spacing: .5px;
+    }
+    header h1 {
+      font-size: clamp(1.8rem, 4vw, 2.8rem); font-weight: 800;
+      background: linear-gradient(135deg, #a5b4fc 0%, #818cf8 40%, #c084fc 100%);
+      -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+      margin-bottom: 10px;
+    }
+    header p { color: var(--muted); font-size: 15px; }
+
+    /* Tabs */
+    .tabs {
+      display: flex; gap: 8px; flex-wrap: wrap;
+      justify-content: center; margin-bottom: 40px;
+    }
+    .tab-btn {
+      padding: 8px 22px; border-radius: 8px; border: 1px solid var(--border);
+      background: var(--surface); color: var(--muted); cursor: pointer;
+      font-size: 13px; font-family: inherit; font-weight: 500; transition: all .2s;
+    }
+    .tab-btn:hover { border-color: var(--accent); color: var(--text); }
+    .tab-btn.active {
+      background: linear-gradient(135deg, var(--accent), var(--accent2));
+      border-color: transparent; color: white;
+    }
+
+    /* Panels */
+    .panel { display: none; animation: fadeIn .3s ease; }
+    .panel.active { display: block; }
+    @keyframes fadeIn { from { opacity:0; transform:translateY(6px); } to { opacity:1; transform:translateY(0); } }
+
+    .panel-title {
+      font-size: 18px; font-weight: 700; margin-bottom: 8px;
+      display: flex; align-items: center; gap: 8px;
+    }
+    .panel-desc { color: var(--muted); font-size: 13px; margin-bottom: 28px; }
+
+    /* Mermaid wrapper */
+    .mermaid-wrap {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      padding: 32px 24px;
+      overflow-x: auto;
+    }
+    .mermaid-wrap .mermaid { display: flex; justify-content: center; }
+
+    /* Zoom controls */
+    .controls {
+      display: flex; gap: 8px; margin-bottom: 16px; justify-content: flex-end;
+    }
+    .ctrl-btn {
+      padding: 6px 14px; border-radius: 6px; border: 1px solid var(--border);
+      background: var(--surface); color: var(--muted); cursor: pointer;
+      font-size: 12px; font-family: inherit; transition: all .15s;
+    }
+    .ctrl-btn:hover { border-color: var(--accent); color: var(--text); }
+  </style>
+</head>
+<body>
+<div class="page">
+
+  <header>
+    <div class="badge">🤖 ERP Agentic AI</div>
+    <h1>System Flowcharts</h1>
+    <p>Mermaid diagrams — end-to-end view of every major workflow</p>
+  </header>
+
+  <div class="tabs">
+    <button class="tab-btn active" onclick="switchTab('main')">🔄 Main Request Flow</button>
+    <button class="tab-btn" onclick="switchTab('intent')">🧠 Intent Pipeline</button>
+    <button class="tab-btn" onclick="switchTab('po')">🛒 Purchase Order Flow</button>
+    <button class="tab-btn" onclick="switchTab('stock')">📦 Stock Arrival Flow</button>
+    <button class="tab-btn" onclick="switchTab('leave')">📅 Leave Flow</button>
+    <button class="tab-btn" onclick="switchTab('db')">🗄️ DB Entity Relations</button>
+  </div>
+
+  <!-- ── MAIN REQUEST FLOW ── -->
+  <div id="panel-main" class="panel active">
+    <div class="panel-title">🔄 End-to-End Request Flow</div>
+    <div class="panel-desc">From user typing a message in the chat UI all the way to the response being saved and returned.</div>
+    <div class="controls">
+      <button class="ctrl-btn" onclick="zoom('main-diagram', 0.8)">− Zoom Out</button>
+      <button class="ctrl-btn" onclick="zoom('main-diagram', 1.25)">+ Zoom In</button>
+      <button class="ctrl-btn" onclick="resetZoom('main-diagram')">↺ Reset</button>
+    </div>
+    <div class="mermaid-wrap">
+      <div id="main-diagram" style="transform-origin:top center; transition:transform .2s;">
+        <div class="mermaid">
+flowchart TD
+    A([👤 User types message\nin React Chat UI]) --> B[POST /chat\nBearer JWT token]
+    B --> C{🔐 JWT Valid?}
+    C -- No --> E1([❌ 401 Unauthorized])
+    C -- Yes --> D[Resolve user_id & role\nadmin / employee]
+    D --> F[Load last 3 chat turns\nfrom ai_conversations]
+    F --> G[⚙️ generate_plan\nagent.py]
+
+    G --> H{Clarification\nResume?}
+    H -- Yes --> I[Merge prior query\n+ new answer]
+    I --> P
+
+    H -- No --> J[🔀 Semantic Router\nsemantic_router.py]
+    J --> K{Keyword\nRule Match?}
+    K -- Yes --> P
+    K -- No --> L{🧠 BERT Embedding\ncosine ≥ 0.65?}
+    L -- Yes --> P
+    L -- No --> M[🦙 Ollama LLM\nllama3.2:3b]
+    M --> N{Valid\nJSON plan?}
+    N -- Yes --> P
+    N -- No --> O[Rule-Based\nFallback Planner]
+    O --> P
+
+    P{Plan Type?}
+    P -- conversation --> Q([💬 Return direct\nLLM response])
+    P -- action --> R[⚙️ execute_plan\nexecution_engine.py]
+
+    R --> S{RBAC\nCheck}
+    S -- Denied --> T([🚫 403 Auth Error])
+    S -- Allowed --> U{Guardrails\nCheck}
+    U -- Blocked --> V([⚠️ Ask user to\nclarify input])
+    U -- Pass --> W[🔧 Call Tool Function\ntools.py]
+
+    W --> X[(💾 SQLite /\nPostgreSQL DB)]
+    X --> Y[Log to\nerp_api_logs]
+    Y --> Z[Save to\nai_conversations]
+    Z --> AA([✅ Return JSON response\nto frontend])
+
+    style A fill:#6366f1,color:#fff,stroke:none
+    style AA fill:#10b981,color:#fff,stroke:none
+    style E1 fill:#ef4444,color:#fff,stroke:none
+    style T fill:#ef4444,color:#fff,stroke:none
+    style V fill:#f59e0b,color:#fff,stroke:none
+    style Q fill:#8b5cf6,color:#fff,stroke:none
+    style M fill:#f97316,color:#fff,stroke:none
+    style X fill:#1e293b,color:#94a3b8,stroke:#334155
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── INTENT PIPELINE ── -->
+  <div id="panel-intent" class="panel">
+    <div class="panel-title">🧠 Intent Classification Pipeline</div>
+    <div class="panel-desc">Three-layer cascade — keyword rules fire first, then BERT embeddings, then LLM as last resort.</div>
+    <div class="controls">
+      <button class="ctrl-btn" onclick="zoom('intent-diagram', 0.8)">− Zoom Out</button>
+      <button class="ctrl-btn" onclick="zoom('intent-diagram', 1.25)">+ Zoom In</button>
+      <button class="ctrl-btn" onclick="resetZoom('intent-diagram')">↺ Reset</button>
+    </div>
+    <div class="mermaid-wrap">
+      <div id="intent-diagram" style="transform-origin:top center; transition:transform .2s;">
+        <div class="mermaid">
+flowchart TD
+    IN([User Message]) --> NORM[Normalise text\nlowercase, strip punct]
+
+    NORM --> CLR{Clarification\nResume Check}
+    CLR -- Yes --> MERGE[Merge original query\n+ new answer\nclassify merged text]
+    MERGE --> DONE
+
+    CLR -- No --> KW[Layer 1 — Keyword Rules\nREGEX patterns per intent\nconst KEYWORD_INTENT_RULES]
+    KW --> KW_HIT{Match?}
+    KW_HIT -- Yes, conf ≥ 0.93 --> DONE
+
+    KW_HIT -- No --> SEM[Layer 2 — Sentence-BERT\nall-MiniLM-L6-v2\ncached at startup]
+    SEM --> EMB[Encode query\nto 384-dim vector]
+    EMB --> COS[Cosine similarity\nvs. intent example matrix]
+    COS --> THRESH{Best score\n≥ 0.65?}
+    THRESH -- Yes --> DONE
+
+    THRESH -- No --> LLM[Layer 3 — Ollama LLM\nllama3.2:3b\nJSON structured output]
+    LLM --> LLM_OK{Valid plan\nreturned?}
+    LLM_OK -- Yes --> DONE
+    LLM_OK -- No, retry --> LLM2[Short prompt retry\nnum_ctx 512]
+    LLM2 --> LLM2_OK{Valid?}
+    LLM2_OK -- Yes --> DONE
+    LLM2_OK -- No --> FB[Rule-Based\nFallback Planner\nagent.py]
+    FB --> DONE
+
+    DONE([Resolved Intent + Plan])
+
+    subgraph Intents [Supported Intents]
+        I1[check_inventory]
+        I2[create_purchase_order]
+        I3[get_po_status]
+        I4[generate_invoice]
+        I5[get_vendors]
+        I6[add_vendor]
+        I7[update_vendor]
+        I8[apply_leave]
+        I9[stock_arrival]
+    end
+
+    DONE --> Intents
+
+    style IN fill:#6366f1,color:#fff,stroke:none
+    style DONE fill:#10b981,color:#fff,stroke:none
+    style LLM fill:#f97316,color:#fff,stroke:none
+    style LLM2 fill:#f97316,color:#fff,stroke:none
+    style FB fill:#f59e0b,color:#fff,stroke:none
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── PURCHASE ORDER FLOW ── -->
+  <div id="panel-po" class="panel">
+    <div class="panel-title">🛒 Purchase Order Workflow</div>
+    <div class="panel-desc">Full lifecycle of a PO — from create_purchase_order tool call to vendor email notification.</div>
+    <div class="controls">
+      <button class="ctrl-btn" onclick="zoom('po-diagram', 0.8)">− Zoom Out</button>
+      <button class="ctrl-btn" onclick="zoom('po-diagram', 1.25)">+ Zoom In</button>
+      <button class="ctrl-btn" onclick="resetZoom('po-diagram')">↺ Reset</button>
+    </div>
+    <div class="mermaid-wrap">
+      <div id="po-diagram" style="transform-origin:top center; transition:transform .2s;">
+        <div class="mermaid">
+flowchart TD
+    START([User: order 50 amber bottles\nfrom MedLife]) --> EE[execution_engine.py\nexecute_plan]
+
+    EE --> RBAC{RBAC Check\nEmployee or Admin?}
+    RBAC -- Denied --> DENY([🚫 Auth Error])
+
+    RBAC -- Allowed --> G1{Item name\nvague?}
+    G1 -- Yes\nitem/those/them/stuff --> VAGUE([⚠️ Please specify\nexact item name])
+    G1 -- No --> G2{Vendor\nspecified?}
+    G2 -- No vendor --> VLIST[Fetch vendor list\nfrom DB]
+    VLIST --> VSHOW([📋 Please choose\na vendor])
+    G2 -- Vendor given --> RES[Resolve item\nfrom Inventory DB\nfuzzy match]
+
+    RES --> CODE[Get item_code\nfrom inventory\nor generate GEN-XXX]
+    CODE --> POID[Generate PO ID\nYYMMDD-ITEMCODE-NNN]
+    POID --> SAVE[INSERT purchase_order\nstatus Pending]
+    SAVE --> VEMAIL{Vendor has\nemail on file?}
+    VEMAIL -- Yes --> EMAIL[📧 Send PO email\nvia SMTP\nemail_service.py]
+    VEMAIL -- No --> NOEMAIL[Log: no email\nfor vendor]
+    EMAIL --> RESP
+    NOEMAIL --> RESP
+    RESP([✅ PO Created\nReturn po_id + email status])
+
+    RESP --> AUDIT[Log to erp_api_logs\nstatus SUCCESS]
+    AUDIT --> INV{Conditional\nInventory Check\nin same plan?}
+    INV -- Yes --> CCHECK[get_inventory\ncheck quantity]
+    CCHECK --> COND{quantity\nlt threshold?}
+    COND -- Yes --> REORDER[Auto-create\nreorder PO]
+    COND -- No --> END
+    INV -- No --> END([Done])
+
+    style START fill:#6366f1,color:#fff,stroke:none
+    style RESP fill:#10b981,color:#fff,stroke:none
+    style DENY fill:#ef4444,color:#fff,stroke:none
+    style VAGUE fill:#f59e0b,color:#fff,stroke:none
+    style VSHOW fill:#f59e0b,color:#fff,stroke:none
+    style EMAIL fill:#06b6d4,color:#fff,stroke:none
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── STOCK ARRIVAL FLOW ── -->
+  <div id="panel-stock" class="panel">
+    <div class="panel-title">📦 Stock Arrival Workflow</div>
+    <div class="panel-desc">Security-first inventory update — every arrival must be cross-validated against a pending Purchase Order.</div>
+    <div class="controls">
+      <button class="ctrl-btn" onclick="zoom('stock-diagram', 0.8)">− Zoom Out</button>
+      <button class="ctrl-btn" onclick="zoom('stock-diagram', 1.25)">+ Zoom In</button>
+      <button class="ctrl-btn" onclick="resetZoom('stock-diagram')">↺ Reset</button>
+    </div>
+    <div class="mermaid-wrap">
+      <div id="stock-diagram" style="transform-origin:top center; transition:transform .2s;">
+        <div class="mermaid">
+flowchart TD
+    START([User: 50 amber bottles arrived\nfor PO 260324-AMB-001]) --> IC[Intent: stock_arrival\ndetected]
+    IC --> TOOL[update_inventory_stock\nitem, quantity, po_id]
+
+    TOOL --> PO_ID{PO ID\nprovided?}
+
+    PO_ID -- Yes --> FIND[Lookup PO\n_resolve_purchase_order]
+    FIND --> EXISTS{PO\nexists?}
+    EXISTS -- No --> ERR1([🚫 Security Alert:\nPO does not exist])
+    EXISTS -- Yes --> DUPL{PO already\nDelivered?}
+    DUPL -- Yes --> ERR2([🚫 Security Alert:\nDuplicate arrival blocked])
+    DUPL -- No --> MATCH{Item name\nmatches PO?}
+    MATCH -- No --> ERR3([🚫 Data Mismatch:\nItem verification failed])
+    MATCH -- Yes --> UPD
+
+    PO_ID -- No --> AUTO[Auto-find pending PO\nfor this item]
+    AUTO --> AFOUND{Found?}
+    AFOUND -- No --> ERR4([⚠️ No pending PO found\nProvide PO ID])
+    AFOUND -- Yes --> UPD
+
+    UPD[UPDATE inventory\nquantity += arrived_qty]
+    UPD --> STATUS[Mark PO status\nas Delivered]
+    STATUS --> COMMIT[DB Commit]
+    COMMIT --> RESP([✅ Stock Updated\nPO marked Delivered\nNew total shown])
+
+    style START fill:#6366f1,color:#fff,stroke:none
+    style RESP fill:#10b981,color:#fff,stroke:none
+    style ERR1 fill:#ef4444,color:#fff,stroke:none
+    style ERR2 fill:#ef4444,color:#fff,stroke:none
+    style ERR3 fill:#ef4444,color:#fff,stroke:none
+    style ERR4 fill:#f59e0b,color:#fff,stroke:none
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── LEAVE FLOW ── -->
+  <div id="panel-leave" class="panel">
+    <div class="panel-title">📅 Leave Application Workflow</div>
+    <div class="panel-desc">From employee request to manager approval — the full leave management lifecycle.</div>
+    <div class="controls">
+      <button class="ctrl-btn" onclick="zoom('leave-diagram', 0.8)">− Zoom Out</button>
+      <button class="ctrl-btn" onclick="zoom('leave-diagram', 1.25)">+ Zoom In</button>
+      <button class="ctrl-btn" onclick="resetZoom('leave-diagram')">↺ Reset</button>
+    </div>
+    <div class="mermaid-wrap">
+      <div id="leave-diagram" style="transform-origin:top center; transition:transform .2s;">
+        <div class="mermaid">
+flowchart TD
+    EMP([👤 Employee: apply leave\ntomorrow for fever]) --> IC[Intent: apply_leave\nclassified]
+    IC --> PARSE[Parse leave details\napply_leave tool]
+
+    PARSE --> DATE[Parse date\ntomorrow / 25th March / YYYY-MM-DD]
+    DATE --> TYPE[Normalise leave type\nFull Day / 1st Half / 2nd Half]
+    TYPE --> USER[Fetch username\nfrom users table]
+    USER --> INSERT[INSERT leave_application\nstatus Pending]
+    INSERT --> RESP1([✅ Leave submitted\nID confirmed to employee])
+
+    RESP1 --> ADMIN_VIEW
+
+    subgraph ADMIN_VIEW [Admin Dashboard — LeavesPage.tsx]
+        LIST[GET /leaves\nList all applications]
+        ROW[Admin sees Pending row]
+        ACTION{Approve\nor Reject?}
+        LIST --> ROW --> ACTION
+    end
+
+    ACTION -- Approve --> UPD1[PUT /leaves/id/status\nstatus Approved]
+    Action -- Reject --> UPD2[PUT /leaves/id/status\nstatus Rejected]
+    UPD1 --> DONE1([✅ Leave Approved\nDB updated])
+    UPD2 --> DONE2([❌ Leave Rejected\nDB updated])
+
+    style EMP fill:#6366f1,color:#fff,stroke:none
+    style RESP1 fill:#8b5cf6,color:#fff,stroke:none
+    style DONE1 fill:#10b981,color:#fff,stroke:none
+    style DONE2 fill:#ef4444,color:#fff,stroke:none
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── DB ENTITY RELATIONS ── -->
+  <div id="panel-db" class="panel">
+    <div class="panel-title">🗄️ Database Entity Relationships</div>
+    <div class="panel-desc">All 7 database tables and their foreign-key relationships.</div>
+    <div class="controls">
+      <button class="ctrl-btn" onclick="zoom('db-diagram', 0.8)">− Zoom Out</button>
+      <button class="ctrl-btn" onclick="zoom('db-diagram', 1.25)">+ Zoom In</button>
+      <button class="ctrl-btn" onclick="resetZoom('db-diagram')">↺ Reset</button>
+    </div>
+    <div class="mermaid-wrap">
+      <div id="db-diagram" style="transform-origin:top center; transition:transform .2s;">
+        <div class="mermaid">
+erDiagram
+    USERS {
+        int id PK
+        string username
+        string email
+        string password_hash
+        string role
+        timestamp created_at
+    }
+
+    INVENTORY {
+        int id PK
+        string item_code
+        string item_name
+        string category
+        int quantity
+        float mrp
+    }
+
+    PURCHASE_ORDERS {
+        int id PK
+        string po_id
+        string item_name
+        string item_code
+        int quantity
+        string vendor
+        string status
+        timestamp created_at
+    }
+
+    VENDORS {
+        int id PK
+        string vendor_code
+        string vendor_name
+        string location
+        string item_category
+        string email
+    }
+
+    LEAVE_APPLICATIONS {
+        int id PK
+        int user_id FK
+        string username
+        string reason
+        date leave_date
+        string leave_type
+        string status
+        timestamp created_at
+    }
+
+    AI_CONVERSATIONS {
+        int id PK
+        int user_id FK
+        string session_id
+        string session_title
+        text user_query
+        text agent_response
+        timestamp timestamp
+    }
+
+    ERP_API_LOGS {
+        int id PK
+        string plan_id
+        string tool_name
+        int step_index
+        text request_payload
+        string response_status
+        timestamp timestamp
+    }
+
+    USERS ||--o{ LEAVE_APPLICATIONS : "submits"
+    USERS ||--o{ AI_CONVERSATIONS : "has"
+    PURCHASE_ORDERS }o--|| INVENTORY : "references item"
+    PURCHASE_ORDERS }o--|| VENDORS : "placed with"
+        </div>
+      </div>
+    </div>
+  </div>
+
+</div><!-- /page -->
+
+<script>
+  mermaid.initialize({
+    startOnLoad: true,
+    theme: 'dark',
+    darkMode: true,
+    themeVariables: {
+      primaryColor: '#6366f1',
+      primaryTextColor: '#e2e8f0',
+      primaryBorderColor: '#4f46e5',
+      lineColor: '#6366f1',
+      secondaryColor: '#1e293b',
+      tertiaryColor: '#111827',
+      background: '#111827',
+      mainBkg: '#1e293b',
+      nodeBorder: '#334155',
+      clusterBkg: '#1e293b',
+      titleColor: '#e2e8f0',
+      edgeLabelBackground: '#1e293b',
+      attributeBackgroundColorEven: '#1e293b',
+      attributeBackgroundColorOdd: '#111827',
+      fontFamily: 'Inter, sans-serif',
+      fontSize: '14px',
+    },
+    flowchart: { curve: 'basis', htmlLabels: true, padding: 20 },
+    er: { diagramPadding: 20, useMaxWidth: true },
+  });
+
+  function switchTab(name) {
+    document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
+    document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+    document.getElementById('panel-' + name).classList.add('active');
+    event.target.classList.add('active');
+  }
+
+  const scales = {};
+  function zoom(diagId, factor) {
+    scales[diagId] = (scales[diagId] || 1) * factor;
+    document.getElementById(diagId).style.transform = `scale(${scales[diagId]})`;
+  }
+  function resetZoom(diagId) {
+    scales[diagId] = 1;
+    document.getElementById(diagId).style.transform = 'scale(1)';
+  }
+</script>
+</body>
+</html>

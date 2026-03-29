@@ -1,6 +1,10 @@
-from fastapi import FastAPI, Depends, Query, Header, HTTPException
+import json
+import os
+
+from fastapi import FastAPI, Depends, Query, Header, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 from sqlalchemy import func
@@ -24,6 +28,34 @@ from app.services.auth import register_user, login_user, get_current_user, hash_
 app = FastAPI()
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="auth/login")
+
+
+def error_payload(code: str, message: str, details: dict | None = None) -> dict:
+    return {
+        "error": {
+            "code": code,
+            "message": message,
+            "details": details or {},
+        }
+    }
+
+
+@app.exception_handler(HTTPException)
+async def http_exception_handler(_: Request, exc: HTTPException):
+    detail_message = exc.detail if isinstance(exc.detail, str) else "Request failed"
+    detail_meta = {} if isinstance(exc.detail, str) else {"detail": exc.detail}
+    return JSONResponse(
+        status_code=exc.status_code,
+        content=error_payload("HTTP_ERROR", detail_message, detail_meta),
+    )
+
+
+@app.exception_handler(Exception)
+async def unhandled_exception_handler(_: Request, exc: Exception):
+    return JSONResponse(
+        status_code=500,
+        content=error_payload("INTERNAL_ERROR", "Unexpected server error", {"exception": str(exc)}),
+    )
 
 # Enable CORS
 app.add_middleware(
@@ -150,13 +182,14 @@ def seed_data():
 seed_data()
 
 # Preload the semantic intent classifier model at startup
-try:
-    from app.services.intent_classifier import preload_model
-    from app.services.semantic_router import preload_semantic_router
-    preload_model()
-    preload_semantic_router()
-except Exception as e:
-    print(f"[Intent] Preload skipped: {e}")
+if os.getenv("DISABLE_INTENT_PRELOAD", "0") != "1":
+    try:
+        from app.services.intent_classifier import preload_model
+        from app.services.semantic_router import preload_semantic_router
+        preload_model()
+        preload_semantic_router()
+    except Exception as e:
+        print(f"[Intent] Preload skipped: {e}")
 
 
 # -------------------------------
@@ -230,11 +263,71 @@ def get_me(authorization: str = Header(None), db: Session = Depends(get_db)):
     }
 
 
+def _write_chat_audit_log(db: Session, user: User, message: str, plan: dict | None, response: str, status: str) -> None:
+    intents: list[str] = []
+    chain_name = None
+    if isinstance(plan, dict):
+        intent_detection = plan.get("intent_detection", {})
+        resolved_intents = intent_detection.get("resolved_intents", [])
+        if isinstance(resolved_intents, list):
+            intents = [entry.get("intent") for entry in resolved_intents if isinstance(entry, dict) and entry.get("intent")]
+        if not intents and isinstance(intent_detection.get("intent"), str):
+            intents = [intent_detection["intent"]]
+        chain = intent_detection.get("chain", {}) if isinstance(intent_detection, dict) else {}
+        if isinstance(chain, dict):
+            chain_name = chain.get("name")
+
+    payload = {
+        "user_id": user.id,
+        "role": user.role,
+        "message": message,
+        "intents": intents,
+        "chain": chain_name,
+        "response_preview": str(response)[:200],
+    }
+    db.add(
+        ERPAPILog(
+            tool_name="agent_chat",
+            request_payload=json.dumps(payload, default=str),
+            response_status=status,
+        )
+    )
+    db.commit()
+
+
+def get_current_active_user(token: str = Depends(oauth2_scheme), db: Session = Depends(get_db)):
+    user = get_current_user(db, token)
+    if not user:
+        raise HTTPException(status_code=401, detail="Invalid token")
+    return user
+
+
+def get_admin_user(current_user: User = Depends(get_current_active_user)):
+    if current_user.role not in ("admin", "administrator"):
+        raise HTTPException(status_code=403, detail="Not enough privileges")
+    return current_user
+
+
 # -------------------------------
 # Chat Endpoint
 # -------------------------------
 @app.post("/chat")
-def chat(user_id: int, message: str, session_id: Optional[str] = None, db: Session = Depends(get_db)):
+def chat(
+    message: str,
+    session_id: Optional[str] = None,
+    authorization: str = Header(None),
+    db: Session = Depends(get_db),
+):
+
+    if not authorization or not authorization.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="Missing or invalid token")
+
+    token = authorization.split(" ", 1)[1]
+    current_user = get_current_user(db, token)
+    if not current_user:
+        raise HTTPException(status_code=401, detail="Invalid or expired token")
+
+    user_id = current_user.id
 
     try:
         # If no session_id provided, create a new one
@@ -244,6 +337,8 @@ def chat(user_id: int, message: str, session_id: Optional[str] = None, db: Sessi
         else:
             # Try to get existing session title
             existing_conv = db.query(AIConversation).filter(AIConversation.session_id == session_id).first()
+            if existing_conv and existing_conv.user_id != user_id and current_user.role not in ("admin", "administrator"):
+                raise HTTPException(status_code=403, detail="Not authorized for this session")
             session_title = existing_conv.session_title if existing_conv else message[:30]
 
         # Fetch the last 3 conversations for memory (within the same session)
@@ -270,7 +365,7 @@ def chat(user_id: int, message: str, session_id: Optional[str] = None, db: Sessi
 
         elif plan.get("type") == "action" or "steps" in plan:
             # ERP tool execution
-            response = execute_plan(plan, db, user_id=user_id)
+            response = execute_plan(plan, db, user_id=user_id, user_role=current_user.role)
 
             # Log the ERP execution
             log = ERPAPILog(
@@ -296,6 +391,8 @@ def chat(user_id: int, message: str, session_id: Optional[str] = None, db: Sessi
         db.add(conversation)
         db.commit()
 
+        _write_chat_audit_log(db, current_user, message, plan if isinstance(plan, dict) else None, str(response), "SUCCESS")
+
         return {
             "plan": plan,
             "response": response,
@@ -320,14 +417,18 @@ def chat(user_id: int, message: str, session_id: Optional[str] = None, db: Sessi
         db.add(conversation)
         db.commit()
 
-        return {"error": error_msg}
+        _write_chat_audit_log(db, current_user, message, None, error_msg, "FAILED")
+        raise HTTPException(status_code=500, detail=error_msg)
 
 
 # -------------------------------
 # History Endpoints
 # -------------------------------
 @app.get("/history/{user_id}")
-def get_history(user_id: int, db: Session = Depends(get_db)):
+def get_history(user_id: int, db: Session = Depends(get_db), current_user: User = Depends(get_current_active_user)):
+    if current_user.id != user_id and current_user.role not in ("admin", "administrator"):
+        raise HTTPException(status_code=403, detail="Not authorized")
+
     # Get unique sessions for the user with the latest timestamp
     sessions = db.query(
         AIConversation.session_id,
@@ -347,7 +448,11 @@ def get_history(user_id: int, db: Session = Depends(get_db)):
 
 
 @app.get("/history/chat/{session_id}")
-def get_session_chat(session_id: str, db: Session = Depends(get_db)):
+def get_session_chat(session_id: str, db: Session = Depends(get_db), current_user: User = Depends(get_current_active_user)):
+    owner = db.query(AIConversation.user_id).filter(AIConversation.session_id == session_id).first()
+    if owner and owner[0] != current_user.id and current_user.role not in ("admin", "administrator"):
+        raise HTTPException(status_code=403, detail="Not authorized")
+
     messages = db.query(AIConversation)\
         .filter(AIConversation.session_id == session_id)\
         .order_by(AIConversation.timestamp.asc()).all()
@@ -369,21 +474,25 @@ def get_session_chat(session_id: str, db: Session = Depends(get_db)):
     return result
 
 @app.delete("/history/chat/{session_id}")
-def delete_session(session_id: str, db: Session = Depends(get_db)):
+def delete_session(session_id: str, db: Session = Depends(get_db), current_user: User = Depends(get_current_active_user)):
+    owner = db.query(AIConversation.user_id).filter(AIConversation.session_id == session_id).first()
+    if owner and owner[0] != current_user.id and current_user.role not in ("admin", "administrator"):
+        raise HTTPException(status_code=403, detail="Not authorized")
+
     try:
         db.query(AIConversation).filter(AIConversation.session_id == session_id).delete()
         db.commit()
         return {"status": "success", "message": "Session deleted"}
     except Exception as e:
         db.rollback()
-        return {"status": "error", "message": str(e)}
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 # -------------------------------
 # Dashboard Stats
 # -------------------------------
 @app.get("/dashboard/stats")
-def get_dashboard_stats(db: Session = Depends(get_db)):
+def get_dashboard_stats(db: Session = Depends(get_db), current_user: User = Depends(get_admin_user)):
     total_items = db.query(Inventory).count()
     total_quantity = db.query(func.sum(Inventory.quantity)).scalar() or 0
     low_stock_count = db.query(Inventory).filter(Inventory.quantity < 10).count()
@@ -432,6 +541,7 @@ def list_inventory(
     search: Optional[str] = None,
     low_stock: bool = False,
     db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
 ):
     query = db.query(Inventory)
     if search:
@@ -461,6 +571,7 @@ def list_inventory(
 def list_purchase_orders(
     status: Optional[str] = None,
     db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
 ):
     query = db.query(PurchaseOrder)
     if status:
@@ -486,16 +597,6 @@ def list_purchase_orders(
 # -------------------------------
 # Leave Management
 # -------------------------------
-def get_current_active_user(token: str = Depends(oauth2_scheme), db: Session = Depends(get_db)):
-    user = get_current_user(db, token)
-    if not user:
-        raise HTTPException(status_code=401, detail="Invalid token")
-    return user
-
-def get_admin_user(current_user: User = Depends(get_current_active_user)):
-    if current_user.role not in ("admin", "administrator"):
-        raise HTTPException(status_code=403, detail="Not enough privileges")
-    return current_user
 
 @app.get("/leaves")
 def list_all_leaves(db: Session = Depends(get_db), current_user: User = Depends(get_admin_user)):
@@ -579,7 +680,7 @@ def update_leave_status(
 # Vendor Listing
 # -------------------------------
 @app.get("/vendors")
-def list_vendors(db: Session = Depends(get_db)):
+def list_vendors(db: Session = Depends(get_db), current_user: User = Depends(get_current_active_user)):
     vendors = db.query(Vendor).order_by(Vendor.vendor_name).all()
     return [
         {

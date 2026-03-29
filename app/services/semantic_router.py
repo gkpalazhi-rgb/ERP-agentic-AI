@@ -272,6 +272,10 @@ class IntentResolver:
         patterns = (
             r"\b(?:of|for|item|stock of|inventory for|update inventory for|order for)\s+([A-Za-z][A-Za-z0-9 .&/-]+?)(?:\s+(?:today|tomorrow|next|po|invoice|qty|quantity|units|kg|pcs|boxes|nos)\b|$)",
             r"\b(?:cement|steel rods|sand|tiles|wire|bricks|capsules|bottles|amber bottles|glass bottles|brahmi chm)\b",
+            # "11 neem tab arrived" — <quantity> <item> <arrival verb>
+            r"\b\d+\s+([A-Za-z][A-Za-z0-9 .&/-]+?)\s+(?:arrived|received|delivered|has\s+arrived|have\s+arrived)\b",
+            # "mark 50 dhanwantharam as arrived"
+            r"\b\d+\s+([A-Za-z][A-Za-z0-9 .&/-]+?)\s+(?:as\s+)?(?:arrived|received|delivered)\b",
         )
         for pattern in patterns:
             match = re.search(pattern, text, re.I)
@@ -299,7 +303,7 @@ class IntentResolver:
         return None
 
     def _extract_date(self, text: str) -> str | None:
-        explicit = re.search(r"\b(\d{1,2}/\d{1,2}/\d{2,4})\b", text)
+        explicit = re.search(r"\b(\d{1,2}[/-]\d{1,2}[/-]\d{2,4})\b", text)
         if explicit:
             return explicit.group(1)
 

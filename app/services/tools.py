@@ -386,9 +386,15 @@ Authorized by: ERP AI Agent
 # Apply for leave
 def apply_leave(reason: str, leave_date: str, leave_type: str, db, user_id: int = 1):
     try:
-        try:
-            parsed_date = datetime.strptime(leave_date, "%Y-%m-%d").date()
-        except ValueError:
+        parsed_date = None
+        for fmt in ("%Y-%m-%d", "%d-%m-%Y", "%d/%m/%Y", "%m-%d-%Y", "%m/%d/%Y"):
+            try:
+                parsed_date = datetime.strptime(leave_date, fmt).date()
+                break
+            except ValueError:
+                continue
+        
+        if not parsed_date:
             parsed_date = datetime.now().date()
         
         # Normalize leave type
@@ -432,6 +438,18 @@ def update_inventory_stock(item: str, quantity: int, db, po_id=None, user_id: in
                 return {"error": f"Security Alert: Purchase Order '{po_id}' does not exist. Stock arrival rejected."}
             if po.status == "Delivered":
                 return {"error": f"Security Alert: Stock for PO '{po_id}' has already been received. Data duplication prevented."}
+            # If item is a placeholder or looks like a PO ID, resolve from PO record
+            _is_placeholder = (
+                item_lower in ("item", "items", "")
+                or re.match(r"^\d{6}-[a-z0-9]+-\d{3}$", item_lower)  # PO ID mistakenly used as item
+                or re.match(r"^\d+$", item_lower)                     # bare number
+            )
+            if _is_placeholder:
+                item = po.item_name
+                item_lower = item.lower()
+            # If quantity is 0 or not provided, use PO quantity
+            if quantity <= 0:
+                quantity = po.quantity
             # Verify item matches (allow loose matching)
             if item_lower not in po.item_name.lower() and po.item_name.lower() not in item_lower:
                 return {"error": f"Data Mismatch: PO '{po_id}' is for '{po.item_name}', but you reported '{item}'. Verification failed."}

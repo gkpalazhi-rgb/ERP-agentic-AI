@@ -2,15 +2,15 @@
            THAIKKATTU MOOSS VAIDYARATNAM
                 PURCHASE INVOICE
 ==================================================
-PO ID:         260324-FG00639-001
+PO ID:         260328-6-001
 STATUS:        Delivered
-VENDOR:        Default_Vendor
+VENDOR:        Agro Farmers
 --------------------------------------------------
-ITEM:          Dhanwantharam Soft Gel Capsule
-ITEM CODE:     FG00639
-QUANTITY:      50
-UNIT PRICE:    ₹0.00
+ITEM:          Aloe Vera Gel 50Gm
+ITEM CODE:     6
+QUANTITY:      12
+UNIT PRICE:    ₹50.00
 --------------------------------------------------
-TOTAL DUE:     ₹0.00
+TOTAL DUE:     ₹600.00
 ==================================================
 Authorized by: ERP AI Agent

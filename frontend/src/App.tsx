@@ -40,7 +40,14 @@ function App() {
   });
 
   // Navigation
-  const [currentPage, setCurrentPage] = useState<Page>('dashboard');
+  const [currentPage, setCurrentPage] = useState<Page>(() => {
+    const saved = localStorage.getItem('erp_user');
+    if (saved) {
+      const parsed = JSON.parse(saved);
+      if (parsed.role !== 'admin' && parsed.role !== 'administrator') return 'chat';
+    }
+    return 'dashboard';
+  });
 
   // Chat state
   const [inputValue, setInputValue] = useState('');
@@ -83,6 +90,11 @@ function App() {
     setUser(newUser);
     localStorage.setItem('erp_token', newToken);
     localStorage.setItem('erp_user', JSON.stringify(newUser));
+    if (newUser.role !== 'admin' && newUser.role !== 'administrator') {
+      setCurrentPage('chat');
+    } else {
+      setCurrentPage('dashboard');
+    }
   };
 
   const handleLogout = () => {
@@ -98,7 +110,9 @@ function App() {
   const loadHistory = async () => {
     if (!user) return;
     try {
-      const res = await fetch(`/history/${user.user_id}`);
+      const res = await fetch(`/history/${user.user_id}`, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
       if (res.ok) {
         const data = await res.json();
         setConversations(data);
@@ -115,7 +129,9 @@ function App() {
   const loadSessionChat = async (sessionId: string) => {
     setCurrentSessionId(sessionId);
     try {
-      const res = await fetch(`/history/chat/${sessionId}`);
+      const res = await fetch(`/history/chat/${sessionId}`, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
       if (res.ok) {
         const data = await res.json();
         const formattedMessages = data.map((msg: any) => ({
@@ -137,7 +153,10 @@ function App() {
 
   const handleDeleteChat = async (sessionId: string) => {
     try {
-      const res = await fetch(`/history/chat/${sessionId}`, { method: 'DELETE' });
+      const res = await fetch(`/history/chat/${sessionId}`, { 
+        method: 'DELETE',
+        headers: { Authorization: `Bearer ${token}` }
+      });
       if (res.ok) {
         setConversations((prev) => prev.filter((c) => c.session_id !== sessionId));
         if (currentSessionId === sessionId) {
@@ -172,7 +191,10 @@ function App() {
         url += `&session_id=${encodeURIComponent(currentSessionId)}`;
       }
 
-      const res = await fetch(url, { method: 'POST' });
+      const res = await fetch(url, { 
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}` }
+      });
 
       if (res.ok) {
         const data = await res.json();
@@ -194,7 +216,7 @@ function App() {
         let errorText = 'Sorry, something went wrong. Please try again.';
         try {
           const errData = await res.json();
-          errorText = errData.detail || errData.error || errorText;
+          errorText = errData.detail || (errData.error && errData.error.message) || (typeof errData.error === 'string' ? errData.error : errorText);
         } catch {}
         setMessages((prev) => [
           ...prev,
@@ -225,7 +247,7 @@ function App() {
   }
 
   // Navigation items
-  const navItems: { key: Page; label: string; icon: typeof LayoutDashboard }[] = [
+  const allNavItems: { key: Page; label: string; icon: typeof LayoutDashboard }[] = [
     { key: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
     { key: 'chat', label: 'AI Chat', icon: MessageCircle },
     { key: 'inventory', label: 'Inventory', icon: Package },
@@ -233,6 +255,11 @@ function App() {
     { key: 'vendors', label: 'Vendors', icon: Users },
     { key: 'leaves', label: 'Leaves', icon: CalendarDays },
   ];
+
+  const employeeTabs = ['chat', 'inventory', 'vendors'];
+  const navItems = user.role === 'admin' || user.role === 'administrator' 
+    ? allNavItems 
+    : allNavItems.filter(item => employeeTabs.includes(item.key));
 
   return (
     <div className="flex h-screen bg-[#F5E6D3]">

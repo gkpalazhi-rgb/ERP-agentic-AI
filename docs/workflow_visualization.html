@@ -1,0 +1,958 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>ERP Agent — System Workflow</title>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=Fira+Code:wght@400;500&display=swap" rel="stylesheet" />
+  <style>
+    :root {
+      --bg: #0a0e1a;
+      --surface: #111827;
+      --surface2: #1a2234;
+      --border: rgba(255,255,255,0.08);
+      --text: #e2e8f0;
+      --muted: #64748b;
+      --accent: #6366f1;
+      --accent2: #8b5cf6;
+      --green: #10b981;
+      --yellow: #f59e0b;
+      --red: #ef4444;
+      --blue: #3b82f6;
+      --cyan: #06b6d4;
+      --orange: #f97316;
+      --pink: #ec4899;
+    }
+
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: 'Inter', sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      min-height: 100vh;
+      overflow-x: hidden;
+    }
+
+    /* Background grid */
+    body::before {
+      content: '';
+      position: fixed;
+      inset: 0;
+      background-image:
+        linear-gradient(rgba(99,102,241,0.04) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(99,102,241,0.04) 1px, transparent 1px);
+      background-size: 40px 40px;
+      pointer-events: none;
+      z-index: 0;
+    }
+
+    .page-wrapper { position: relative; z-index: 1; }
+
+    /* ── Header ── */
+    header {
+      text-align: center;
+      padding: 56px 24px 40px;
+      position: relative;
+    }
+    header .badge {
+      display: inline-flex; align-items: center; gap: 6px;
+      background: rgba(99,102,241,0.15); border: 1px solid rgba(99,102,241,0.3);
+      border-radius: 999px; padding: 4px 14px; font-size: 12px;
+      color: #a5b4fc; margin-bottom: 16px; letter-spacing: .5px;
+    }
+    header h1 {
+      font-size: clamp(2rem, 5vw, 3.2rem);
+      font-weight: 800;
+      background: linear-gradient(135deg, #a5b4fc 0%, #818cf8 40%, #c084fc 100%);
+      -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+      line-height: 1.15; margin-bottom: 12px;
+    }
+    header p {
+      color: var(--muted); font-size: 16px; max-width: 560px; margin: 0 auto 32px;
+    }
+
+    /* ── Tabs ── */
+    .tabs {
+      display: flex; justify-content: center; gap: 8px;
+      flex-wrap: wrap; padding: 0 24px 48px;
+    }
+    .tab-btn {
+      padding: 8px 20px; border-radius: 8px; border: 1px solid var(--border);
+      background: var(--surface); color: var(--muted); cursor: pointer;
+      font-size: 13px; font-family: inherit; font-weight: 500;
+      transition: all .2s;
+    }
+    .tab-btn:hover { border-color: var(--accent); color: var(--text); }
+    .tab-btn.active {
+      background: linear-gradient(135deg, var(--accent), var(--accent2));
+      border-color: transparent; color: white;
+    }
+
+    /* ── Tab Content ── */
+    .tab-content { display: none; padding: 0 24px 80px; }
+    .tab-content.visible { display: block; animation: fadeIn .3s ease; }
+    @keyframes fadeIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
+
+    /* ── Section Title ── */
+    .section-title {
+      font-size: 22px; font-weight: 700; margin-bottom: 32px;
+      display: flex; align-items: center; gap: 10px;
+    }
+    .section-title span { font-size: 20px; }
+
+    /* ── Architecture Grid ── */
+    .arch-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+      gap: 20px; max-width: 1200px; margin: 0 auto;
+    }
+
+    .arch-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      padding: 24px;
+      transition: transform .2s, box-shadow .2s, border-color .2s;
+      cursor: default;
+    }
+    .arch-card:hover {
+      transform: translateY(-4px);
+      box-shadow: 0 16px 40px rgba(0,0,0,0.4);
+      border-color: rgba(99,102,241,0.4);
+    }
+    .arch-card-icon {
+      width: 44px; height: 44px; border-radius: 10px;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 20px; margin-bottom: 14px;
+    }
+    .arch-card h3 { font-size: 15px; font-weight: 600; margin-bottom: 6px; }
+    .arch-card p { color: var(--muted); font-size: 13px; line-height: 1.6; }
+    .arch-card .tag-list { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 14px; }
+    .tag {
+      padding: 2px 10px; border-radius: 999px; font-size: 11px; font-weight: 600;
+      font-family: 'Fira Code', monospace;
+    }
+
+    /* ── Flow Diagram ── */
+    .flow-container { max-width: 900px; margin: 0 auto; }
+
+    .flow-group {
+      position: relative;
+      margin-bottom: 0;
+    }
+    .flow-connector {
+      display: flex; justify-content: center; align-items: center;
+      padding: 4px 0; position: relative;
+    }
+    .flow-connector::before {
+      content: '';
+      position: absolute;
+      top: 50%; left: 50%;
+      transform: translate(-50%, -50%);
+      width: 2px; height: 24px;
+      background: linear-gradient(to bottom, var(--accent), var(--accent2));
+    }
+    .flow-arrow {
+      width: 0; height: 0;
+      border-left: 8px solid transparent;
+      border-right: 8px solid transparent;
+      border-top: 10px solid var(--accent2);
+      position: relative; z-index: 1;
+    }
+    .flow-box {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 18px 24px;
+      display: flex; align-items: center; gap: 14px;
+      transition: all .2s; cursor: default;
+    }
+    .flow-box:hover { border-color: rgba(99,102,241,0.5); box-shadow: 0 8px 24px rgba(0,0,0,0.3); }
+    .flow-box-icon {
+      width: 40px; height: 40px; border-radius: 10px; flex-shrink: 0;
+      display: flex; align-items: center; justify-content: center; font-size: 18px;
+    }
+    .flow-box h4 { font-size: 14px; font-weight: 600; margin-bottom: 2px; }
+    .flow-box p  { font-size: 12px; color: var(--muted); }
+
+    /* Branch flow */
+    .branch-row {
+      display: grid;
+      grid-template-columns: 1fr 1fr 1fr;
+      gap: 16px; margin: 8px 0;
+    }
+    .branch-item {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 16px;
+      text-align: center;
+      font-size: 12px;
+      transition: all .2s;
+    }
+    .branch-item:hover { border-color: rgba(99,102,241,0.4); }
+    .branch-item .bi-icon { font-size: 22px; margin-bottom: 8px; }
+    .branch-item h5 { font-size: 12px; font-weight: 600; margin-bottom: 4px; }
+    .branch-item p { font-size: 11px; color: var(--muted); }
+
+    .branch-label {
+      text-align: center; font-size: 11px; font-weight: 600; letter-spacing: 1px;
+      color: var(--muted); text-transform: uppercase; margin-bottom: 12px;
+    }
+
+    /* ── Intent Table ── */
+    .intent-grid {
+      max-width: 1100px; margin: 0 auto;
+      display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+      gap: 16px;
+    }
+    .intent-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 14px; padding: 20px;
+      transition: all .2s;
+    }
+    .intent-card:hover { border-color: rgba(99,102,241,0.4); transform: translateY(-2px); }
+    .intent-header {
+      display: flex; align-items: center; gap: 10px; margin-bottom: 12px;
+    }
+    .intent-pill {
+      padding: 3px 10px; border-radius: 999px; font-size: 11px;
+      font-family: 'Fira Code', monospace; font-weight: 600;
+    }
+    .intent-card h4 { font-size: 14px; font-weight: 600; }
+    .intent-card .tool-name {
+      font-family: 'Fira Code', monospace;
+      font-size: 12px; color: var(--cyan);
+      border: 1px solid rgba(6,182,212,0.25); background: rgba(6,182,212,0.08);
+      padding: 2px 8px; border-radius: 6px; display: inline-block; margin-bottom: 8px;
+    }
+    .intent-card p { font-size: 12px; color: var(--muted); line-height: 1.5; }
+    .example-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+    .chip {
+      background: rgba(99,102,241,0.1); border: 1px solid rgba(99,102,241,0.2);
+      padding: 3px 8px; border-radius: 6px; font-size: 10px; color: #a5b4fc;
+      font-style: italic;
+    }
+
+    /* ── DB Schema ── */
+    .schema-grid {
+      display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+      gap: 20px; max-width: 1100px; margin: 0 auto;
+    }
+    .schema-card {
+      background: var(--surface); border: 1px solid var(--border);
+      border-radius: 14px; overflow: hidden; transition: all .2s;
+    }
+    .schema-card:hover { border-color: rgba(99,102,241,0.4); }
+    .schema-header {
+      padding: 14px 18px;
+      display: flex; align-items: center; gap: 8px;
+      font-size: 13px; font-weight: 700;
+      font-family: 'Fira Code', monospace;
+    }
+    .schema-field {
+      padding: 7px 18px;
+      display: flex; align-items: center; justify-content: space-between;
+      border-top: 1px solid var(--border);
+      font-size: 12px;
+    }
+    .schema-field .field-name { font-family: 'Fira Code', monospace; color: var(--text); }
+    .schema-field .field-type { font-family: 'Fira Code', monospace; font-size: 10px; color: var(--muted); }
+    .pk-badge {
+      padding: 1px 6px; border-radius: 4px; font-size: 9px; font-weight: 700;
+      background: rgba(245,158,11,0.2); color: var(--yellow);
+      font-family: 'Fira Code', monospace;
+    }
+
+    /* ── RBAC Table ── */
+    .rbac-container { max-width: 900px; margin: 0 auto; }
+    .rbac-table { width: 100%; border-collapse: collapse; }
+    .rbac-table th {
+      text-align: left; padding: 12px 16px; font-size: 12px;
+      font-weight: 600; color: var(--muted); letter-spacing: .5px;
+      border-bottom: 1px solid var(--border);
+    }
+    .rbac-table td {
+      padding: 12px 16px; font-size: 13px;
+      border-bottom: 1px solid var(--border);
+    }
+    .rbac-table tr:last-child td { border-bottom: none; }
+    .rbac-table tr:hover td { background: rgba(255,255,255,0.02); }
+    .rbac-wrap {
+      background: var(--surface); border: 1px solid var(--border);
+      border-radius: 14px; overflow: hidden;
+    }
+    .check { color: var(--green); font-size: 16px; }
+    .cross { color: var(--red); font-size: 16px; }
+    .tool-col { font-family: 'Fira Code', monospace; font-size: 12px; color: var(--cyan); }
+
+    /* ── Color helpers ── */
+    .c-indigo { background: rgba(99,102,241,0.15); color: #a5b4fc; }
+    .c-purple  { background: rgba(139,92,246,0.15); color: #c4b5fd; }
+    .c-green   { background: rgba(16,185,129,0.15); color: #6ee7b7; }
+    .c-blue    { background: rgba(59,130,246,0.15); color: #93c5fd; }
+    .c-yellow  { background: rgba(245,158,11,0.15); color: #fcd34d; }
+    .c-red     { background: rgba(239,68,68,0.15);  color: #fca5a5; }
+    .c-cyan    { background: rgba(6,182,212,0.15);  color: #67e8f9; }
+    .c-orange  { background: rgba(249,115,22,0.15); color: #fdba74; }
+    .c-pink    { background: rgba(236,72,153,0.15); color: #f9a8d4; }
+
+    /* ── Legend chip ── */
+    .legend {
+      display: flex; gap: 16px; flex-wrap: wrap;
+      margin-bottom: 28px; padding: 16px 20px;
+      background: var(--surface); border: 1px solid var(--border);
+      border-radius: 12px; max-width: 900px; margin: 0 auto 28px;
+    }
+    .legend-item { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--muted); }
+    .legend-dot { width: 10px; height: 10px; border-radius: 3px; flex-shrink: 0; }
+
+    /* ── Responsive ── */
+    @media (max-width: 640px) {
+      .branch-row { grid-template-columns: 1fr; }
+      header h1 { font-size: 1.8rem; }
+    }
+  </style>
+</head>
+<body>
+<div class="page-wrapper">
+
+  <!-- Header -->
+  <header>
+    <div class="badge">🤖 ERP Agentic AI</div>
+    <h1>System Workflow Visualization</h1>
+    <p>A complete end-to-end map of the ERP Agent — from user message to database action.</p>
+  </header>
+
+  <!-- Tabs -->
+  <div class="tabs">
+    <button class="tab-btn active" onclick="showTab('flow')">🔄 Request Flow</button>
+    <button class="tab-btn" onclick="showTab('arch')">🏗️ Architecture</button>
+    <button class="tab-btn" onclick="showTab('intents')">🧠 Intent System</button>
+    <button class="tab-btn" onclick="showTab('schema')">🗄️ Data Models</button>
+    <button class="tab-btn" onclick="showTab('rbac')">🔐 RBAC</button>
+  </div>
+
+  <!-- ════════════════════════════════════ TAB: FLOW ════════════════════════════════════ -->
+  <div id="tab-flow" class="tab-content visible">
+    <div class="flow-container">
+
+      <!-- Step 1 -->
+      <div class="flow-box" style="border-color:rgba(99,102,241,0.35);">
+        <div class="flow-box-icon c-indigo" style="border-radius:10px;">👤</div>
+        <div>
+          <h4>User sends a message</h4>
+          <p>Frontend React app sends <code>POST /chat</code> with JWT Bearer token</p>
+        </div>
+      </div>
+
+      <div class="flow-connector"><div class="flow-arrow"></div></div>
+
+      <!-- Step 2 -->
+      <div class="flow-box">
+        <div class="flow-box-icon c-blue" style="border-radius:10px;">🔐</div>
+        <div>
+          <h4>JWT Authentication</h4>
+          <p><code>auth.py</code> validates token → resolves <b>user_id</b>, <b>role</b> (admin / employee)</p>
+        </div>
+      </div>
+
+      <div class="flow-connector"><div class="flow-arrow"></div></div>
+
+      <!-- Step 3 -->
+      <div class="flow-box">
+        <div class="flow-box-icon c-purple" style="border-radius:10px;">💾</div>
+        <div>
+          <h4>Load Chat History</h4>
+          <p>Last 3 turns fetched from <code>ai_conversations</code> for in-context memory</p>
+        </div>
+      </div>
+
+      <div class="flow-connector"><div class="flow-arrow"></div></div>
+
+      <!-- Step 4 – generate_plan -->
+      <div class="flow-box" style="border-color:rgba(139,92,246,0.4); background: rgba(139,92,246,0.07);">
+        <div class="flow-box-icon c-purple" style="border-radius:10px;">⚙️</div>
+        <div>
+          <h4>generate_plan() — agent.py</h4>
+          <p>Orchestrates intent detection pipeline to produce an execution plan</p>
+        </div>
+      </div>
+
+      <div class="flow-connector"><div class="flow-arrow"></div></div>
+
+      <!-- Branch: 3 paths -->
+      <div class="branch-label">Intent Detection Pipeline (in priority order)</div>
+      <div class="branch-row">
+        <div class="branch-item">
+          <div class="bi-icon">🔁</div>
+          <h5>Clarification Resume</h5>
+          <p>Detects if user is answering a prior clarification question → merges context</p>
+        </div>
+        <div class="branch-item" style="border-color:rgba(99,102,241,0.3); background:rgba(99,102,241,0.04);">
+          <div class="bi-icon">🧠</div>
+          <h5>Semantic Router</h5>
+          <p>Keyword rules → Sentence-BERT embeddings (all-MiniLM-L6-v2) cosine similarity ≥ 0.65</p>
+        </div>
+        <div class="branch-item">
+          <div class="bi-icon">🤖</div>
+          <h5>LLM Fallback</h5>
+          <p>Ollama (llama3.2:3b) asked to return structured JSON. 2 retries, then rule-based fallback</p>
+        </div>
+      </div>
+
+      <div class="flow-connector"><div class="flow-arrow"></div></div>
+
+      <!-- Step 5 - plan type -->
+      <div class="branch-label">Plan Type Decision</div>
+      <div class="branch-row" style="grid-template-columns: 1fr 1fr;">
+        <div class="branch-item" style="border-color:rgba(16,185,129,0.3); background:rgba(16,185,129,0.05);">
+          <div class="bi-icon">💬</div>
+          <h5>type: "conversation"</h5>
+          <p>Small talk / greetings — response returned directly</p>
+        </div>
+        <div class="branch-item" style="border-color:rgba(99,102,241,0.3); background:rgba(99,102,241,0.05);">
+          <div class="bi-icon">⚡</div>
+          <h5>type: "action"</h5>
+          <p>ERP intent — steps list dispatched to execution engine</p>
+        </div>
+      </div>
+
+      <div class="flow-connector"><div class="flow-arrow"></div></div>
+
+      <!-- Step 6 -->
+      <div class="flow-box" style="border-color:rgba(6,182,212,0.35); background:rgba(6,182,212,0.05);">
+        <div class="flow-box-icon c-cyan" style="border-radius:10px;">🔧</div>
+        <div>
+          <h4>execute_plan() — execution_engine.py</h4>
+          <p>Iterates steps: checks RBAC → validates guardrails → calls Tool function → logs to DB</p>
+        </div>
+      </div>
+
+      <div class="flow-connector"><div class="flow-arrow"></div></div>
+
+      <!-- Tool dispatch grid -->
+      <div class="branch-label">Available ERP Tools (tools.py)</div>
+      <div class="branch-row" style="grid-template-columns: repeat(3, 1fr);">
+        <div class="branch-item"><div class="bi-icon">📦</div><h5>get_inventory</h5><p>Fuzzy item search + quantity lookup</p></div>
+        <div class="branch-item"><div class="bi-icon">🛒</div><h5>create_purchase_order</h5><p>Creates PO, sends email to vendor</p></div>
+        <div class="branch-item"><div class="bi-icon">📊</div><h5>get_po_status</h5><p>Fetches PO + calculates cost from MRP</p></div>
+        <div class="branch-item"><div class="bi-icon">🧾</div><h5>generate_purchase_invoice</h5><p>Generates .txt invoice file</p></div>
+        <div class="branch-item"><div class="bi-icon">🏢</div><h5>get_vendors / add_vendor</h5><p>Vendor directory management</p></div>
+        <div class="branch-item"><div class="bi-icon">📅</div><h5>apply_leave</h5><p>Submits leave application with date parsing</p></div>
+      </div>
+      <div style="margin-top:8px;" class="branch-row" style="grid-template-columns: 1fr 1fr;">
+        <div class="branch-item"><div class="bi-icon">✏️</div><h5>update_vendor</h5><p>Updates email / price of a vendor</p></div>
+        <div class="branch-item"><div class="bi-icon">📥</div><h5>update_inventory_stock</h5><p>Cross-validates PO → increments stock → marks PO Delivered</p></div>
+      </div>
+
+      <div class="flow-connector"><div class="flow-arrow"></div></div>
+
+      <!-- Step 7 -->
+      <div class="flow-box">
+        <div class="flow-box-icon c-green" style="border-radius:10px;">💾</div>
+        <div>
+          <h4>Persist to Database (SQLite / PostgreSQL)</h4>
+          <p>Conversation saved to <code>ai_conversations</code>. Action logged to <code>erp_api_logs</code>.</p>
+        </div>
+      </div>
+
+      <div class="flow-connector"><div class="flow-arrow"></div></div>
+
+      <!-- Step 8 -->
+      <div class="flow-box" style="border-color:rgba(16,185,129,0.35); background:rgba(16,185,129,0.05);">
+        <div class="flow-box-icon c-green" style="border-radius:10px;">✅</div>
+        <div>
+          <h4>Response returned to Frontend</h4>
+          <p>JSON: <code>{ plan, response, intent_detection, session_id }</code> → displayed in chat UI</p>
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- ════════════════════════════════════ TAB: ARCH ════════════════════════════════════ -->
+  <div id="tab-arch" class="tab-content">
+    <div style="max-width:1200px; margin:0 auto;">
+      <div class="section-title"><span>🏗️</span> System Architecture Layers</div>
+      <div class="arch-grid">
+
+        <!-- Frontend -->
+        <div class="arch-card">
+          <div class="arch-card-icon c-blue">⚛️</div>
+          <h3>Frontend — React + Vite</h3>
+          <p>TypeScript SPA with Tailwind CSS. Serves chat interface, dashboards, and management pages at <code>localhost:5173</code>.</p>
+          <div class="tag-list">
+            <span class="tag c-blue">LoginPage</span>
+            <span class="tag c-blue">DashboardPage</span>
+            <span class="tag c-blue">InventoryPage</span>
+            <span class="tag c-blue">VendorsPage</span>
+            <span class="tag c-blue">LeavesPage</span>
+            <span class="tag c-blue">PurchaseOrdersPage</span>
+          </div>
+        </div>
+
+        <!-- Backend -->
+        <div class="arch-card">
+          <div class="arch-card-icon c-indigo">🚀</div>
+          <h3>Backend — FastAPI</h3>
+          <p>Python REST API at <code>localhost:8000</code>. Handles auth, chat, CRUD endpoints with JWT-based RBAC and SQLAlchemy ORM.</p>
+          <div class="tag-list">
+            <span class="tag c-indigo">main.py</span>
+            <span class="tag c-indigo">auth.py</span>
+            <span class="tag c-indigo">CORS</span>
+            <span class="tag c-indigo">JWT</span>
+          </div>
+        </div>
+
+        <!-- Agent Layer -->
+        <div class="arch-card">
+          <div class="arch-card-icon c-purple">🤖</div>
+          <h3>Agent Core — agent.py</h3>
+          <p>Orchestrates the full planning pipeline: clarification detection → semantic routing → LLM fallback → rule-based backup.</p>
+          <div class="tag-list">
+            <span class="tag c-purple">generate_plan()</span>
+            <span class="tag c-purple">fallback_planner()</span>
+          </div>
+        </div>
+
+        <!-- Intent Classifier -->
+        <div class="arch-card">
+          <div class="arch-card-icon c-cyan">🧠</div>
+          <h3>Intent Classifier</h3>
+          <p><b>3-layer</b> classifier: regex keyword rules → sentence-transformer semantic similarity → LLM. Caches 900+ inventory items + vendor names.</p>
+          <div class="tag-list">
+            <span class="tag c-cyan">all-MiniLM-L6-v2</span>
+            <span class="tag c-cyan">BERT</span>
+            <span class="tag c-cyan">cosine≥0.65</span>
+          </div>
+        </div>
+
+        <!-- Semantic Router -->
+        <div class="arch-card">
+          <div class="arch-card-icon c-indigo">🔀</div>
+          <h3>Semantic Router</h3>
+          <p>Wraps the intent classifier + legacy keyword logic. Routes messages before touching the LLM, improving latency dramatically.</p>
+          <div class="tag-list">
+            <span class="tag c-indigo">semantic_router.py</span>
+          </div>
+        </div>
+
+        <!-- Execution Engine -->
+        <div class="arch-card">
+          <div class="arch-card-icon c-yellow">⚙️</div>
+          <h3>Execution Engine</h3>
+          <p>Iterates plan steps with RBAC enforcement, guardrails (vague item names, missing vendor), conditional branching, and audit logging.</p>
+          <div class="tag-list">
+            <span class="tag c-yellow">execution_engine.py</span>
+            <span class="tag c-yellow">RBAC</span>
+            <span class="tag c-yellow">Guardrails</span>
+          </div>
+        </div>
+
+        <!-- Tools -->
+        <div class="arch-card">
+          <div class="arch-card-icon c-green">🔧</div>
+          <h3>ERP Tools — tools.py</h3>
+          <p>8 domain tools covering inventory, purchase orders, vendors, invoicing, leave applications and stock arrival verification.</p>
+          <div class="tag-list">
+            <span class="tag c-green">8 tools</span>
+            <span class="tag c-green">tool_registry.py</span>
+          </div>
+        </div>
+
+        <!-- Email -->
+        <div class="arch-card">
+          <div class="arch-card-icon c-orange">📧</div>
+          <h3>Email Service</h3>
+          <p>Sends automated purchase order notifications to vendor emails via SMTP when a PO is created, with HTML template support.</p>
+          <div class="tag-list">
+            <span class="tag c-orange">email_service.py</span>
+            <span class="tag c-orange">SMTP</span>
+          </div>
+        </div>
+
+        <!-- Database -->
+        <div class="arch-card">
+          <div class="arch-card-icon c-pink">🗄️</div>
+          <h3>Database Layer</h3>
+          <p>SQLAlchemy ORM with auto-migration and data backfill on startup. Supports both SQLite (dev) and PostgreSQL (prod).</p>
+          <div class="tag-list">
+            <span class="tag c-pink">SQLAlchemy</span>
+            <span class="tag c-pink">SQLite</span>
+            <span class="tag c-pink">PostgreSQL</span>
+          </div>
+        </div>
+
+        <!-- LLM -->
+        <div class="arch-card">
+          <div class="arch-card-icon c-red">🦙</div>
+          <h3>LLM — Ollama</h3>
+          <p>Local Ollama with <code>llama3.2:3b</code> model as last-resort planner. 25s timeout, lightweight retry with shorter prompt on failure.</p>
+          <div class="tag-list">
+            <span class="tag c-red">llama3.2:3b</span>
+            <span class="tag c-red">localhost:11434</span>
+            <span class="tag c-red">JSON mode</span>
+          </div>
+        </div>
+
+      </div>
+    </div>
+  </div>
+
+  <!-- ════════════════════════════════════ TAB: INTENTS ════════════════════════════════════ -->
+  <div id="tab-intents" class="tab-content">
+    <div style="max-width:1100px; margin:0 auto;">
+      <div class="section-title"><span>🧠</span> Intent → Tool Mapping</div>
+      <div class="intent-grid">
+
+        <div class="intent-card">
+          <div class="intent-header">
+            <span class="intent-pill c-blue">check_inventory</span>
+          </div>
+          <div class="tool-name">→ get_inventory(item)</div>
+          <p>Searches inventory by item name with fuzzy matching. Returns quantity or multi-match summary.</p>
+          <div class="example-chips">
+            <span class="chip">"how many amber bottles do we have"</span>
+            <span class="chip">"show stock of arishtam"</span>
+          </div>
+        </div>
+
+        <div class="intent-card">
+          <div class="intent-header">
+            <span class="intent-pill c-indigo">create_purchase_order</span>
+          </div>
+          <div class="tool-name">→ create_purchase_order(item, qty, vendor)</div>
+          <p>Creates PO with auto-generated ID (YYMMDD-ITEMCODE-NNN). Triggers vendor email. Blocks vague items or missing vendor.</p>
+          <div class="example-chips">
+            <span class="chip">"buy 50 amber bottles from MedLife"</span>
+            <span class="chip">"order 100 capsules"</span>
+          </div>
+        </div>
+
+        <div class="intent-card">
+          <div class="intent-header">
+            <span class="intent-pill c-yellow">get_po_status</span>
+          </div>
+          <div class="tool-name">→ get_po_status(po_id)</div>
+          <p>Resolves PO by exact ID, prefix match, or legacy numeric key. Calculates total cost from inventory MRP.</p>
+          <div class="example-chips">
+            <span class="chip">"status of PO 260324-AYU001-001"</span>
+            <span class="chip">"track order 5"</span>
+          </div>
+        </div>
+
+        <div class="intent-card">
+          <div class="intent-header">
+            <span class="intent-pill c-orange">generate_invoice</span>
+          </div>
+          <div class="tool-name">→ generate_purchase_invoice(po_id)</div>
+          <p>Generates a formatted .txt invoice file in the <code>invoices/</code> directory with PO details and total cost.</p>
+          <div class="example-chips">
+            <span class="chip">"generate invoice for PO 260324"</span>
+            <span class="chip">"make a bill for order 3"</span>
+          </div>
+        </div>
+
+        <div class="intent-card">
+          <div class="intent-header">
+            <span class="intent-pill c-cyan">get_vendors</span>
+          </div>
+          <div class="tool-name">→ get_vendors()</div>
+          <p>Returns full vendor directory: code, name, location, category, email.</p>
+          <div class="example-chips">
+            <span class="chip">"show all vendors"</span>
+            <span class="chip">"who supplies bottles"</span>
+          </div>
+        </div>
+
+        <div class="intent-card">
+          <div class="intent-header">
+            <span class="intent-pill c-green">add_vendor</span>
+          </div>
+          <div class="tool-name">→ add_vendor(name, code, category, ...)</div>
+          <p>Registers a new supplier with optional email. Admin-only tool.</p>
+          <div class="example-chips">
+            <span class="chip">"add vendor Pharma Corp for capsules"</span>
+          </div>
+        </div>
+
+        <div class="intent-card">
+          <div class="intent-header">
+            <span class="intent-pill c-purple">update_vendor</span>
+          </div>
+          <div class="tool-name">→ update_vendor(name, email)</div>
+          <p>Updates vendor contact info (email / price). Admin-only tool.</p>
+          <div class="example-chips">
+            <span class="chip">"update vendor email for MedLife"</span>
+          </div>
+        </div>
+
+        <div class="intent-card">
+          <div class="intent-header">
+            <span class="intent-pill c-pink">apply_leave</span>
+          </div>
+          <div class="tool-name">→ apply_leave(reason, date, type)</div>
+          <p>Creates leave application. Parses natural language dates (tomorrow, 25th March). Supports Full Day / Half Day.</p>
+          <div class="example-chips">
+            <span class="chip">"apply leave tomorrow for fever"</span>
+            <span class="chip">"take 1st half leave on Monday"</span>
+          </div>
+        </div>
+
+        <div class="intent-card">
+          <div class="intent-header">
+            <span class="intent-pill c-red">stock_arrival</span>
+          </div>
+          <div class="tool-name">→ update_inventory_stock(item, qty, po_id)</div>
+          <p>Cross-validates against a pending PO before updating. Marks PO as Delivered. Rejects duplicate arrivals.</p>
+          <div class="example-chips">
+            <span class="chip">"50 amber bottles arrived for PO 260324"</span>
+          </div>
+        </div>
+
+      </div>
+    </div>
+  </div>
+
+  <!-- ════════════════════════════════════ TAB: SCHEMA ════════════════════════════════════ -->
+  <div id="tab-schema" class="tab-content">
+    <div style="max-width:1100px; margin:0 auto;">
+      <div class="section-title"><span>🗄️</span> Database Models</div>
+      <div class="schema-grid">
+
+        <!-- Users -->
+        <div class="schema-card">
+          <div class="schema-header c-blue" style="border-radius:0; background:rgba(59,130,246,0.12);">
+            👤 users
+          </div>
+          <div class="schema-field"><span class="field-name">id</span><span class="pk-badge">PK</span></div>
+          <div class="schema-field"><span class="field-name">username</span><span class="field-type">VARCHAR</span></div>
+          <div class="schema-field"><span class="field-name">email</span><span class="field-type">VARCHAR</span></div>
+          <div class="schema-field"><span class="field-name">password_hash</span><span class="field-type">VARCHAR</span></div>
+          <div class="schema-field"><span class="field-name">role</span><span class="field-type">VARCHAR</span></div>
+          <div class="schema-field"><span class="field-name">created_at</span><span class="field-type">TIMESTAMP</span></div>
+        </div>
+
+        <!-- Inventory -->
+        <div class="schema-card">
+          <div class="schema-header" style="background:rgba(16,185,129,0.12); color:#6ee7b7;">
+            📦 inventory
+          </div>
+          <div class="schema-field"><span class="field-name">id</span><span class="pk-badge">PK</span></div>
+          <div class="schema-field"><span class="field-name">item_code</span><span class="field-type">VARCHAR</span></div>
+          <div class="schema-field"><span class="field-name">item_name</span><span class="field-type">VARCHAR</span></div>
+          <div class="schema-field"><span class="field-name">category</span><span class="field-type">VARCHAR</span></div>
+          <div class="schema-field"><span class="field-name">quantity</span><span class="field-type">INTEGER</span></div>
+          <div class="schema-field"><span class="field-name">mrp</span><span class="field-type">FLOAT</span></div>
+        </div>
+
+        <!-- Purchase Orders -->
+        <div class="schema-card">
+          <div class="schema-header" style="background:rgba(245,158,11,0.12); color:#fcd34d;">
+            🛒 purchase_orders
+          </div>
+          <div class="schema-field"><span class="field-name">id</span><span class="pk-badge">PK</span></div>
+          <div class="schema-field"><span class="field-name">po_id</span><span class="field-type">VARCHAR (YYMMDD-...)</span></div>
+          <div class="schema-field"><span class="field-name">item_name</span><span class="field-type">VARCHAR</span></div>
+          <div class="schema-field"><span class="field-name">item_code</span><span class="field-type">VARCHAR</span></div>
+          <div class="schema-field"><span class="field-name">quantity</span><span class="field-type">INTEGER</span></div>
+          <div class="schema-field"><span class="field-name">vendor</span><span class="field-type">VARCHAR</span></div>
+          <div class="schema-field"><span class="field-name">status</span><span class="field-type">VARCHAR (Pending/Delivered)</span></div>
+          <div class="schema-field"><span class="field-name">created_at</span><span class="field-type">TIMESTAMP</span></div>
+        </div>
+
+        <!-- Vendors -->
+        <div class="schema-card">
+          <div class="schema-header" style="background:rgba(6,182,212,0.12); color:#67e8f9;">
+            🏢 vendors
+          </div>
+          <div class="schema-field"><span class="field-name">id</span><span class="pk-badge">PK</span></div>
+          <div class="schema-field"><span class="field-name">vendor_code</span><span class="field-type">VARCHAR</span></div>
+          <div class="schema-field"><span class="field-name">vendor_name</span><span class="field-type">VARCHAR</span></div>
+          <div class="schema-field"><span class="field-name">location</span><span class="field-type">VARCHAR</span></div>
+          <div class="schema-field"><span class="field-name">item_category</span><span class="field-type">VARCHAR</span></div>
+          <div class="schema-field"><span class="field-name">email</span><span class="field-type">VARCHAR</span></div>
+        </div>
+
+        <!-- Leave Applications -->
+        <div class="schema-card">
+          <div class="schema-header" style="background:rgba(236,72,153,0.12); color:#f9a8d4;">
+            📅 leave_applications
+          </div>
+          <div class="schema-field"><span class="field-name">id</span><span class="pk-badge">PK</span></div>
+          <div class="schema-field"><span class="field-name">user_id</span><span class="field-type">FK → users</span></div>
+          <div class="schema-field"><span class="field-name">username</span><span class="field-type">VARCHAR</span></div>
+          <div class="schema-field"><span class="field-name">reason</span><span class="field-type">TEXT</span></div>
+          <div class="schema-field"><span class="field-name">leave_date</span><span class="field-type">DATE</span></div>
+          <div class="schema-field"><span class="field-name">leave_type</span><span class="field-type">VARCHAR</span></div>
+          <div class="schema-field"><span class="field-name">status</span><span class="field-type">VARCHAR (Pending/Approved/Rejected)</span></div>
+        </div>
+
+        <!-- AI Conversations -->
+        <div class="schema-card">
+          <div class="schema-header" style="background:rgba(139,92,246,0.12); color:#c4b5fd;">
+            💬 ai_conversations
+          </div>
+          <div class="schema-field"><span class="field-name">id</span><span class="pk-badge">PK</span></div>
+          <div class="schema-field"><span class="field-name">user_id</span><span class="field-type">FK → users</span></div>
+          <div class="schema-field"><span class="field-name">session_id</span><span class="field-type">UUID</span></div>
+          <div class="schema-field"><span class="field-name">session_title</span><span class="field-type">VARCHAR</span></div>
+          <div class="schema-field"><span class="field-name">user_query</span><span class="field-type">TEXT</span></div>
+          <div class="schema-field"><span class="field-name">agent_response</span><span class="field-type">TEXT</span></div>
+          <div class="schema-field"><span class="field-name">timestamp</span><span class="field-type">TIMESTAMP</span></div>
+        </div>
+
+        <!-- ERP API Logs -->
+        <div class="schema-card">
+          <div class="schema-header" style="background:rgba(249,115,22,0.12); color:#fdba74;">
+            📋 erp_api_logs
+          </div>
+          <div class="schema-field"><span class="field-name">id</span><span class="pk-badge">PK</span></div>
+          <div class="schema-field"><span class="field-name">plan_id</span><span class="field-type">UUID</span></div>
+          <div class="schema-field"><span class="field-name">tool_name</span><span class="field-type">VARCHAR</span></div>
+          <div class="schema-field"><span class="field-name">step_index</span><span class="field-type">INTEGER</span></div>
+          <div class="schema-field"><span class="field-name">request_payload</span><span class="field-type">TEXT (JSON)</span></div>
+          <div class="schema-field"><span class="field-name">response_status</span><span class="field-type">VARCHAR (SUCCESS/FAILED/DENIED)</span></div>
+          <div class="schema-field"><span class="field-name">timestamp</span><span class="field-type">TIMESTAMP</span></div>
+        </div>
+
+      </div>
+    </div>
+  </div>
+
+  <!-- ════════════════════════════════════ TAB: RBAC ════════════════════════════════════ -->
+  <div id="tab-rbac" class="tab-content">
+    <div class="rbac-container">
+      <div class="section-title"><span>🔐</span> Role-Based Access Control</div>
+      <div class="rbac-wrap">
+        <table class="rbac-table">
+          <thead>
+            <tr>
+              <th>Tool</th>
+              <th>Description</th>
+              <th>👤 Employee</th>
+              <th>🛡️ Admin</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td class="tool-col">get_inventory</td>
+              <td>Check stock levels</td>
+              <td><span class="check">✓</span></td>
+              <td><span class="check">✓</span></td>
+            </tr>
+            <tr>
+              <td class="tool-col">create_purchase_order</td>
+              <td>Create new PO + email vendor</td>
+              <td><span class="check">✓</span></td>
+              <td><span class="check">✓</span></td>
+            </tr>
+            <tr>
+              <td class="tool-col">get_po_status</td>
+              <td>View PO details and cost</td>
+              <td><span class="check">✓</span></td>
+              <td><span class="check">✓</span></td>
+            </tr>
+            <tr>
+              <td class="tool-col">generate_purchase_invoice</td>
+              <td>Generate invoice file</td>
+              <td><span class="check">✓</span></td>
+              <td><span class="check">✓</span></td>
+            </tr>
+            <tr>
+              <td class="tool-col">apply_leave</td>
+              <td>Submit leave application</td>
+              <td><span class="check">✓</span></td>
+              <td><span class="check">✓</span></td>
+            </tr>
+            <tr>
+              <td class="tool-col">update_inventory_stock</td>
+              <td>Record stock arrival (PO-verified)</td>
+              <td><span class="check">✓</span></td>
+              <td><span class="check">✓</span></td>
+            </tr>
+            <tr>
+              <td class="tool-col">get_vendors</td>
+              <td>View vendor directory</td>
+              <td><span class="check">✓</span></td>
+              <td><span class="check">✓</span></td>
+            </tr>
+            <tr>
+              <td class="tool-col">add_vendor</td>
+              <td>Register new supplier</td>
+              <td><span class="cross">✕</span></td>
+              <td><span class="check">✓</span></td>
+            </tr>
+            <tr>
+              <td class="tool-col">update_vendor</td>
+              <td>Modify vendor contact/price</td>
+              <td><span class="cross">✕</span></td>
+              <td><span class="check">✓</span></td>
+            </tr>
+            <tr>
+              <td class="tool-col">/dashboard/stats</td>
+              <td>System overview analytics</td>
+              <td><span class="cross">✕</span></td>
+              <td><span class="check">✓</span></td>
+            </tr>
+            <tr>
+              <td class="tool-col">/leaves (all)</td>
+              <td>View all leave applications</td>
+              <td><span class="cross">✕</span></td>
+              <td><span class="check">✓</span></td>
+            </tr>
+            <tr>
+              <td class="tool-col">PUT /leaves/{id}/status</td>
+              <td>Approve / Reject leave</td>
+              <td><span class="cross">✕</span></td>
+              <td><span class="check">✓</span></td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <!-- Guardrails section -->
+      <div style="margin-top:36px;">
+        <div class="section-title" style="font-size:18px;"><span>🛡️</span> Execution Guardrails</div>
+        <div class="arch-grid" style="grid-template-columns: repeat(auto-fill, minmax(220px,1fr)); max-width:100%;">
+          <div class="arch-card">
+            <div class="arch-card-icon c-red">🚫</div>
+            <h3>Vague Item Rejection</h3>
+            <p>PO blocked if item name is "item", "those", "them", "stuff", etc. User prompted for specific name.</p>
+          </div>
+          <div class="arch-card">
+            <div class="arch-card-icon c-yellow">🏢</div>
+            <h3>Mandatory Vendor Selection</h3>
+            <p>PO blocked if no vendor specified. Returns live vendor list from DB with example prompt.</p>
+          </div>
+          <div class="arch-card">
+            <div class="arch-card-icon c-orange">🔒</div>
+            <h3>Stock Arrival Verification</h3>
+            <p>Inventory update requires a valid pending PO. Duplicate arrivals rejected. Item cross-checked against PO.</p>
+          </div>
+          <div class="arch-card">
+            <div class="arch-card-icon c-blue">❓</div>
+            <h3>Clarification Loop</h3>
+            <p>Missing required fields trigger a clarification question. Follow-up answers are merged with original query.</p>
+          </div>
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+</div>
+
+<script>
+  function showTab(name) {
+    document.querySelectorAll('.tab-content').forEach(el => el.classList.remove('visible'));
+    document.querySelectorAll('.tab-btn').forEach(el => el.classList.remove('active'));
+    document.getElementById('tab-' + name).classList.add('visible');
+    event.target.classList.add('active');
+  }
+</script>
+</body>
+</html>

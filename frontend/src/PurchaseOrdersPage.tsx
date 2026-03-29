@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { ShoppingCart, Filter } from 'lucide-react';
+import { ShoppingCart } from 'lucide-react';
 
 interface PurchaseOrder {
   id: number;
@@ -22,7 +22,8 @@ export default function PurchaseOrdersPage() {
     const params = new URLSearchParams();
     if (statusFilter) params.set('status', statusFilter);
 
-    fetch(`/purchase-orders?${params}`)
+    const token = localStorage.getItem('erp_token');
+    fetch(`/purchase-orders?${params}`, { headers: { Authorization: `Bearer ${token}` } })
       .then((r) => r.json())
       .then((data) => { setOrders(data); setLoading(false); })
       .catch(() => setLoading(false));

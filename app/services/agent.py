@@ -97,12 +97,27 @@ def _get_last_turn(chat_history: str) -> tuple[str, str] | None:
 
 
 def _continue_clarification(user_message: str, chat_history: str = ""):
-    last_turn = _get_last_turn(chat_history)
-    if not last_turn:
+    if not chat_history.strip():
         return None
 
-    previous_user_message, previous_agent_response = last_turn
-    _, previous_metadata = classify_and_plan(previous_user_message)
+    matches = re.findall(r"User:\s*(.*?)\nAgent:\s*(.*?)(?=\nUser:|$)", chat_history, re.S)
+    if not matches:
+        return None
+
+    user_msgs = [m[0].strip() for m in matches]
+    agent_msgs = [m[1].strip() for m in matches]
+    
+    last_agent_response = agent_msgs[-1]
+    
+    # Find the original user query that started this clarification loop
+    original_idx = len(agent_msgs) - 1
+    while original_idx > 0 and agent_msgs[original_idx - 1] == last_agent_response:
+        original_idx -= 1
+        
+    original_user_message = user_msgs[original_idx]
+
+    from app.services.intent_classifier import classify_and_plan, build_clarification_response
+    _, previous_metadata = classify_and_plan(original_user_message)
 
     if previous_metadata.get("reason") != "missing_required_arguments":
         return None
@@ -111,11 +126,14 @@ def _continue_clarification(user_message: str, chat_history: str = ""):
     if not isinstance(previous_intent, str):
         return None
 
-    expected_prompt = build_clarification_response(previous_intent, previous_user_message)
-    if not expected_prompt or previous_agent_response != expected_prompt:
+    expected_prompt = build_clarification_response(previous_intent, original_user_message)
+    if not expected_prompt or last_agent_response != expected_prompt:
         return None
 
-    merged_message = f"{previous_user_message} {user_message}".strip()
+    # Merge all subsequent user answers into one mega-message to extract the arg
+    subsequent_answers = " ".join(user_msgs[original_idx+1:])
+    merged_message = f"{original_user_message} {subsequent_answers} {user_message}".strip()
+    
     plan, merged_metadata = classify_and_plan(merged_message)
     if plan is None:
         if merged_metadata.get("reason") == "missing_required_arguments":
@@ -127,7 +145,7 @@ def _continue_clarification(user_message: str, chat_history: str = ""):
                     "intent_detection": {
                         **merged_metadata,
                         "source": "semantic_followup_clarification",
-                        "merged_from": previous_user_message,
+                        "merged_from": original_user_message,
                     },
                 }
         return None
@@ -135,7 +153,7 @@ def _continue_clarification(user_message: str, chat_history: str = ""):
     plan["intent_detection"] = {
         **merged_metadata,
         "source": "semantic_followup",
-        "merged_from": previous_user_message,
+        "merged_from": original_user_message,
     }
     return plan
 
@@ -192,7 +210,9 @@ def fallback_planner(user_message: str, chat_history: str = ""):
 
     msg = f"{chat_history} {user_msg}".lower()
 
-    if ("invoice" in user_msg or "bill" in user_msg or "receipt" in user_msg) and "create" not in user_msg and "purchase" not in user_msg:
+    words = set(re.findall(r"\b\w+\b", user_msg))
+
+    if words.intersection({"invoice", "bill", "receipt"}) and not words.intersection({"create", "purchase"}):
         po_match = re.search(r"(?:for\s+(?:po|order)\s+)?#?(\d+)", user_msg)
         if po_match:
             return {
@@ -204,7 +224,7 @@ def fallback_planner(user_message: str, chat_history: str = ""):
                 }],
             }
 
-    if ("status" in user_msg or "cost" in user_msg or "track" in user_msg) and ("po" in user_msg or "order" in user_msg):
+    if words.intersection({"status", "cost", "track"}) and words.intersection({"po", "order"}):
         po_match = re.search(r"(?:of\s+(?:po|order)\s+)?#?(\d+)", user_msg)
         if po_match:
             return {
@@ -246,7 +266,7 @@ def fallback_planner(user_message: str, chat_history: str = ""):
             "steps": [{"type": "tool", "name": "get_vendors", "args": {}}],
         }
 
-    if "purchase" in user_msg or "order" in user_msg or "po" in user_msg or "buy" in user_msg or "procure" in user_msg:
+    if words.intersection({"purchase", "order", "po", "buy", "procure"}):
         qty_match = re.search(r"\d+", user_msg)
         quantity = int(qty_match.group()) if qty_match else 1
         item = extract_item_from_message(user_msg, msg)
@@ -274,7 +294,10 @@ def fallback_planner(user_message: str, chat_history: str = ""):
                 leave_type = "1st Half"
 
         date_str = datetime.now().strftime("%Y-%m-%d")
-        if "tomorrow" in user_msg:
+        explicit_date = re.search(r"\b(\d{1,2}[/-]\d{1,2}[/-]\d{2,4})\b", user_msg)
+        if explicit_date:
+            date_str = explicit_date.group(1)
+        elif "tomorrow" in user_msg:
             date_str = (datetime.now() + timedelta(days=1)).strftime("%Y-%m-%d")
 
         return {
@@ -287,13 +310,25 @@ def fallback_planner(user_message: str, chat_history: str = ""):
         }
 
     if "arrived" in user_msg or "received" in user_msg or "delivered" in user_msg:
-        qty_match = re.search(r"\d+", user_msg)
-        quantity = int(qty_match.group()) if qty_match else 0
-        item = extract_item_from_message(user_msg, msg)
-        po_match = re.search(r"(?:po|order)\s+#?(\d+)", user_msg)
-        po_id = int(po_match.group(1)) if po_match else None
+        # Extract PO ID — support YYMMDD-CODE-NNN format + legacy numeric
+        po_id = None
+        po_fmt_match = re.search(r"(\d{6}-[A-Z0-9]+-\d{3})", user_msg, re.I)
+        if po_fmt_match:
+            po_id = po_fmt_match.group(1).upper()
+        else:
+            po_legacy_match = re.search(r"(?:po|order)\s+#?(\d+)", user_msg)
+            if po_legacy_match:
+                po_id = po_legacy_match.group(1)
 
-        if quantity > 0:
+        # Extract quantity — skip digits inside PO IDs
+        scrubbed_msg = re.sub(r"\b\d{6}-[A-Z0-9]+-\d{3}\b", " ", user_msg, flags=re.I)
+        scrubbed_msg = re.sub(r"(?:po|order)\s*#?\s*\d+", " ", scrubbed_msg, flags=re.I)
+        qty_match = re.search(r"\d+", scrubbed_msg)
+        quantity = int(qty_match.group()) if qty_match else 0
+
+        item = extract_item_from_message(user_msg, msg)
+
+        if quantity > 0 or po_id:
             return {
                 "type": "action",
                 "steps": [{
@@ -303,7 +338,7 @@ def fallback_planner(user_message: str, chat_history: str = ""):
                 }],
             }
 
-    if "inventory" in user_msg or "stock" in user_msg or "check" in user_msg or "have" in user_msg or "many" in user_msg or "left" in user_msg:
+    if "inventory" in user_msg or "stock" in user_msg or "check" in user_msg or "have" in user_msg or "many" in user_msg or "left" in user_msg or "count" in user_msg:
         item = extract_item_from_message(user_msg, msg)
         return {
             "type": "action",
@@ -319,11 +354,36 @@ def extract_item_from_message(user_msg: str, full_msg: str, before_keyword: str 
         if item_match:
             return item_match.group(1).strip()
 
+    # Match "11 neem tab arrived" / "50 bottles received" — <quantity> <item> <arrival verb>
+    arrival_match = re.search(r"\b\d+\s+([a-z][a-z0-9\s]+?)\s+(?:arrived|received|delivered|has\s+arrived|have\s+arrived)", user_msg, re.I)
+    if arrival_match:
+        item = arrival_match.group(1).strip()
+        # Clean out PO-related fragments
+        item = re.sub(r"\b(?:for|from|vendor|po|order|id)[\s\w]*$", "", item, flags=re.I).strip()
+        if item and item.lower() not in ["them", "it", "the", "some", "more"]:
+            return item
+
+    # Match "buy 15 neem tabs" or "order 50 amber bottles"
+    direct_match = re.search(r"\b(?:buy|order|get|procure|purchase)\s+(?:\d+)?\s*([a-z0-9\s]+)", user_msg)
+    if direct_match:
+        item = direct_match.group(1).strip()
+        item = re.sub(r"\b(?:from|vendor)[\s\w]+$", "", item).strip()
+        if item and item not in ["them", "it", "the", "some", "more"]:
+            return item
+
     item_match = re.search(r"(?:for|of)\s+(?:an?\s+)?(?:\d+\s+)?([a-z0-9\s]+)", user_msg)
     if item_match:
         item = item_match.group(1).strip()
         item = re.sub(r"\s+(?:create|make|generate|produce|and|it).*$", "", item).strip()
         if item and item not in ["them", "it", "the"]:
+            return item
+
+    # Match "how many aloe vera gel" / "do we have amber bottles" / "count brahmi"
+    qty_check_match = re.search(r"\b(?:how many|do we have|do you have|are there any|count)\s+([a-zA-Z0-9\s-]+?)(?:\s+(?:left|remaining|in stock|available))?$", user_msg, re.I)
+    if qty_check_match:
+        item = qty_check_match.group(1).strip()
+        item = re.sub(r"\b(?:inventory|stock)\b.*", "", item, flags=re.I).strip()
+        if item and item.lower() not in ["them", "it", "the", "some", "more"]:
             return item
 
     item_match = re.search(r"(?:for|of)\s+(?:an?\s+)?(?:\d+\s+)?([a-z0-9\s]+)", full_msg)

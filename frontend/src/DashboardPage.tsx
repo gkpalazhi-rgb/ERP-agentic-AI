@@ -19,10 +19,14 @@ export default function DashboardPage() {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    fetch('/dashboard/stats')
-      .then((r) => r.json())
+    const token = localStorage.getItem('erp_token');
+    fetch('/dashboard/stats', { headers: { Authorization: `Bearer ${token}` } })
+      .then(async (r) => {
+        if (!r.ok) throw new Error('Unauthorized');
+        return r.json();
+      })
       .then((data) => { setStats(data); setLoading(false); })
-      .catch(() => setLoading(false));
+      .catch(() => { setStats(null); setLoading(false); });
   }, []);
 
   if (loading) {
@@ -76,7 +80,6 @@ export default function DashboardPage() {
     },
   ];
 
-  const poTotal = stats.purchase_orders.total || 1;
 
   const toolNameMap: Record<string, string> = {
     plan_execution: 'Plan Executed',

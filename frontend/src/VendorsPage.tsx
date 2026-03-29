@@ -21,7 +21,8 @@ const VendorsPage: React.FC = () => {
 
   const fetchVendors = async () => {
     try {
-      const res = await fetch('/vendors');
+      const token = localStorage.getItem('erp_token');
+      const res = await fetch('/vendors', { headers: { Authorization: `Bearer ${token}` } });
       if (res.ok) {
         const data = await res.json();
         setVendors(data);

@@ -23,7 +23,8 @@ export default function InventoryPage() {
     if (search) params.set('search', search);
     if (lowStockOnly) params.set('low_stock', 'true');
 
-    fetch(`/inventory?${params}`)
+    const token = localStorage.getItem('erp_token');
+    fetch(`/inventory?${params}`, { headers: { Authorization: `Bearer ${token}` } })
       .then((r) => r.json())
       .then((data) => { setItems(data); setLoading(false); })
       .catch(() => setLoading(false));

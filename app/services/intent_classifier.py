@@ -26,7 +26,7 @@ import numpy as np
 # Configuration
 # ---------------------------------------------------------------------------
 MODEL_NAME = "all-MiniLM-L6-v2"
-CONFIDENCE_THRESHOLD = 0.55
+CONFIDENCE_THRESHOLD = 0.65
 
 # ---------------------------------------------------------------------------
 # Module-level singletons (lazy-initialised, thread-safe)
@@ -79,6 +79,19 @@ INTENT_EXAMPLES: dict[str, list[str]] = {
         "stock count for dropper bottles",
         "is bottle stock available",
         "tell me inventory quantity",
+        "stock check capsules",
+        "inventory balance for general items",
+        "how many units of arishtam remain",
+        "check stock of giloy juice",
+        "what is the balance quantity",
+        "show stock ledger",
+        "warehouse check for neem tablets",
+        "how much stock of ashwagandha capsules",
+        "do we have enough chyawanprash left",
+        "current quantity of triphala churnam",
+        "check if we are low on glucose bottles",
+        "available inventory for giloy juice",
+        "how much left... that ayurvedic oil one",
     ],
     "create_purchase_order": [
         "create a purchase order for 50 bottles",
@@ -109,6 +122,17 @@ INTENT_EXAMPLES: dict[str, list[str]] = {
         "order stock from supplier",
         "raise reorder for inventory",
         "create vendor order for capsules",
+        "procurement request for 50 units of arishtam",
+        "we need to restock chyawanprash urgently",
+        "buy 200 boxes of raw materials quickly",
+        "place an order for 20 syruip bottles from medlife",
+        "make a po for that oil we always use",
+        "get stock ready and order 60 units of triphala",
+        "buy more neem tablets",
+        "arrange 30 turmeric powder packets",
+        "purchase arishtam 40 bottles",
+        "i want to order 25 insulin syringes",
+        "order stuff quickly",
     ],
     "get_po_status": [
         "status of PO 260324-AYU001-001",
@@ -135,6 +159,14 @@ INTENT_EXAMPLES: dict[str, list[str]] = {
         "is purchase order pending",
         "show me po summary",
         "lookup po information",
+        "po status 55",
+        "has the order been shipped or approved",
+        "where is my order 123",
+        "what is the delivery status of po 876",
+        "track po AYU-2303-001",
+        "po update needed for last order",
+        "did the order for syringes arrive",
+        "who approved the last po",
     ],
     "generate_invoice": [
         "generate invoice for PO 260324-AYU001-001",
@@ -157,6 +189,15 @@ INTENT_EXAMPLES: dict[str, list[str]] = {
         "billing file for purchase order",
         "export invoice for po",
         "invoice for delivered order",
+        "make billing for the recent po",
+        "invoice for syringes purchase",
+        "generate the billing document for purchase order 123",
+        "create bill for AYU-2303-001",
+        "download receipt for order #55",
+        "print invoice for last purchase",
+        "payment receipt for order",
+        "make billing for the recent po",
+        "invoice for syringes purchase",
     ],
     "get_vendors": [
         "show all vendors",
@@ -179,6 +220,17 @@ INTENT_EXAMPLES: dict[str, list[str]] = {
         "vendor list for inventory",
         "display supplier contacts",
         "find available vendors",
+        "who sells arishtam to us",
+        "vendor details for capsules",
+        "which vendor provides giloy juice",
+        "who sells arishtam to us",
+        "get me all suppliers for ayurvedic oils",
+        "find vendor for turmeric powder",
+        "who are our current vendors",
+        "vendor list",
+        "supplier lookup",
+        "who supplies ashwagandha",
+        "vendors for syringes",
     ],
     "add_vendor": [
         "add a new vendor called pharma corp",
@@ -196,6 +248,15 @@ INTENT_EXAMPLES: dict[str, list[str]] = {
         "save a new supplier with price 45",
         "new vendor named herbal source",
         "register vendor for amber bottle supply",
+        "add new vendor medlife suppliers email med@life.com for syringes",
+        "add supplier dr herbs email dr@herbs.com",
+        "include new supplier ayurveda store",
+        "register vendor ayu pharma for capsules",
+        "onboard supplier herbal world email herbal@world.com",
+        "add vendor for turmeric powder with price 120",
+        "new vendor: greenleaf, supplies giloy juice",
+        "create vendor entry for medsuppliers syringes",
+        "add vendor quickmed for insulin syringes",
     ],
     "update_vendor": [
         "update vendor email",
@@ -213,6 +274,15 @@ INTENT_EXAMPLES: dict[str, list[str]] = {
         "update vendor contact info",
         "change supplier email and price",
         "edit vendor record",
+        "correct vendor name for medsuppliers",
+        "change price of syringes vendor to 150",
+        "modify vendor herbal world contact info",
+        "update supplier for capsules",
+        "edit vendor details for ayu pharma",
+        "change vendor email for greenleaf",
+        "update price for turmeric vendor",
+        "update supplier info for arishtam",
+        "change vendor contact number",
     ],
     "apply_leave": [
         "i want to apply for leave",
@@ -238,6 +308,16 @@ INTENT_EXAMPLES: dict[str, list[str]] = {
         "request half day off",
         "apply casual leave",
         "take second half leave today",
+        "i won't be coming today",
+        "i need sick leave for 2 days",
+        "book leave on 25th march",
+        "leave application for personal reasons",
+        "i need a day off",
+        "apply leave next monday urgent",
+        "take leave for medical reasons",
+        "i am on leave today",
+        "leave pls",
+        "apply sick leave",
     ],
     "stock_arrival": [
         "50 bottles have arrived",
@@ -261,6 +341,19 @@ INTENT_EXAMPLES: dict[str, list[str]] = {
         "po shipment received",
         "update stock after delivery",
         "goods receipt for purchase order",
+        "update stock arrival for capsules",
+        "log stock arrival for giloy juice",
+        "warehouse received 30 bottles",
+        "inventory received for arishtam",
+        "mark po 44 delivered",
+        "stock arrived for po 12345",
+        "mark delivery received for AYU-2303-001",
+        "goods received 50 syringes",
+        "delivery of turmeric powder received",
+        "items from po XYZ-999 arrived",
+        "shipment of cargo came in today",
+        "warehouse unloaded items",
+        "mark po 260324-AYU001-001 as delivered",
     ],
 }
 
@@ -294,33 +387,51 @@ KEYWORD_INTENT_RULES: tuple[_KeywordIntentRule, ...] = (
         ),
     ),
     _KeywordIntentRule(
+        intent="get_po_status",
+        patterns=(
+            re.compile(r"\b(?:status|track|where|pending|cost|total cost|summary|details)\b.*\b(?:po|purchase order|order)\b", re.I),
+            re.compile(r"\b(?:po|purchase order|order)\b.*\b(?:status|cost|pending|summary|details)\b", re.I),
+            re.compile(r"\b(?:where is|what happened to|status of)\b.*\b(?:po|purchase order|order)\b", re.I),
+        ),
+    ),
+    _KeywordIntentRule(
         intent="stock_arrival",
         patterns=(
-            re.compile(r"\b(?:arrived|received|delivered|receipt|goods receipt)\b.*\b(?:po|purchase order|stock|shipment|goods|items)\b", re.I),
-            re.compile(r"\b(?:update|mark)\b.*\b(?:stock|inventory)\b.*\b(?:arrived|received|delivered)\b", re.I),
+            re.compile(r"\b(?:arrived|received|delivered|receipt|goods receipt)\b.*\b(?:po|purchase order|stock|shipment|goods|items|units)\b", re.I),
+            re.compile(r"\b(?:po|purchase order|stock|shipment|goods|items|warehouse)\b.*\b(?:arrived|received)\b", re.I),
+            re.compile(r"\b(?:update|mark|log)\b.*\b(?:stock|inventory|arrival)\b.*\b(?:arrived|received|delivered)?\b", re.I),
+            # "11 neem tab arrived" — <quantity> <text> arrived/received/delivered
+            re.compile(r"\b\d+\s+[a-z].+\b(?:arrived|received|delivered)\b", re.I),
+            # "260328-NEMA-001 arrived" — PO-ID + arrived
+            re.compile(r"\b\d{6}-[A-Z0-9]+-\d{3}\b.*\b(?:arrived|received|delivered)\b", re.I),
+            # "arrived ... ID 260328-NEMA-001" or "... ID 260328-NEMA-001 arrived"
+            re.compile(r"\b(?:arrived|received|delivered)\b.*\b\d{6}-[A-Z0-9]+-\d{3}\b", re.I),
+            # "neem tab arrived, ID ..." — item text + arrived + ID/PO ref
+            re.compile(r"\b(?:arrived|received|delivered)\b\s*[,.]?\s*\b(?:id|po)\b", re.I),
         ),
         confidence=0.98,
     ),
     _KeywordIntentRule(
-        intent="get_po_status",
-        patterns=(
-            re.compile(r"\b(?:status|track|where|delivered|pending|cost|total cost|summary|details)\b.*\b(?:po|purchase order|order)\b", re.I),
-            re.compile(r"\b(?:po|purchase order|order)\b.*\b(?:status|cost|delivered|pending|summary|details)\b", re.I),
-        ),
-    ),
-    _KeywordIntentRule(
         intent="check_inventory",
         patterns=(
-            re.compile(r"\b(?:inventory|stock|quantity|available|availability|balance|warehouse)\b", re.I),
-            re.compile(r"\bhow many\b.*\b(?:have|left|in stock)\b", re.I),
+            re.compile(r"\b(?:check|show|tell)\b.*\b(?:inventory|stock|quantity|levels|balance)\b", re.I),
+            re.compile(r"\b(?:inventory|stock|quantity)\b.*\b(?:left|remaining|available)\b", re.I),
+            # "how many X are left" / "how many X"
+            re.compile(r"\bhow many\b", re.I),
+            # "do we have X" / "do you have X"
+            re.compile(r"\b(?:do we have|do you have|are there any)\b", re.I),
+            # "count X"
+            re.compile(r"\bcount\b\s+[a-z]", re.I),
         ),
         confidence=0.93,
     ),
     _KeywordIntentRule(
         intent="create_purchase_order",
         patterns=(
-            re.compile(r"\b(?:create|raise|place|make|issue)\b.*\b(?:purchase order|po)\b", re.I),
-            re.compile(r"\b(?:restock|reorder|procure|purchase|buy|replenish)\b", re.I),
+            re.compile(r"\b(?:create|raise|place|make|issue|new)\b.*\b(?:purchase order|po|order)\b", re.I),
+            re.compile(r"\b(?:restock|reorder|procure|replenish)\b", re.I),
+            re.compile(r"\b(?:can you|please)\b.*\border\b", re.I),
+            re.compile(r"\b(?:buy|order|purchase)\b\s+(?:\d+)?\s*[a-zA-Z]+", re.I),
         ),
         confidence=0.94,
     ),
@@ -328,7 +439,7 @@ KEYWORD_INTENT_RULES: tuple[_KeywordIntentRule, ...] = (
         intent="get_vendors",
         patterns=(
             re.compile(r"\b(?:show|list|get|display|find|who)\b.*\b(?:vendors|vendor|suppliers|supplier)\b", re.I),
-            re.compile(r"\b(?:vendors|suppliers|supplier directory|vendor catalog)\b", re.I),
+            re.compile(r"\b(?:supplier directory|vendor catalog)\b", re.I),
         ),
         confidence=0.95,
     ),
@@ -349,8 +460,8 @@ KEYWORD_INTENT_RULES: tuple[_KeywordIntentRule, ...] = (
     _KeywordIntentRule(
         intent="apply_leave",
         patterns=(
-            re.compile(r"\b(?:apply|request|submit|take|book|mark)\b.*\bleave\b", re.I),
-            re.compile(r"\b(?:day off|half day|time off|sick leave|casual leave)\b", re.I),
+            re.compile(r"\b(?:apply|request|submit|take|book|mark|put)\b.*\bleaves?\b", re.I),
+            re.compile(r"\b(?:sick leave|casual leave|annual leave)\b", re.I),
         ),
         confidence=0.98,
     ),
@@ -477,6 +588,69 @@ def refresh_item_cache() -> None:
 
 
 # ===================================================================
+#  VENDOR CACHE — loads vendors from the DB once, thread-safe
+# ===================================================================
+class _VendorCache:
+    """In-memory cache of all vendor names for fallback matching."""
+    def __init__(self, vendors: list[str]):
+        # Keep longest first for greedy matching
+        self.vendors: list[str] = sorted(set(vendors), key=len, reverse=True)
+        self._lower_map = {}
+        for v in self.vendors:
+            v_norm = _normalize_message(v)
+            if v_norm:
+                self._lower_map[v_norm] = v
+
+    def find_vendor(self, text: str) -> str | None:
+        normalized_text = _normalize_message(text)
+        for v_norm, v_orig in self._lower_map.items():
+            # If the entire message equals the vendor name, accept it
+            if normalized_text == v_norm:
+                return v_orig
+            # Avoid matching single-letter words or extremely generic terms globally
+            if len(v_norm) < 4:
+                continue
+            
+            v_escaped = re.escape(v_norm)
+            if re.search(r'(?<!\w)' + v_escaped + r'(?!\w)', normalized_text, re.I):
+                return v_orig
+                
+        return None
+
+_vendor_cache: _VendorCache | None = None
+
+def _load_vendor_cache() -> _VendorCache:
+    global _vendor_cache
+    if _vendor_cache is not None:
+        return _vendor_cache
+
+    vendors: list[str] = []
+    try:
+        from app.database.db import SessionLocal
+        from app.models.vendor import Vendor
+        db = SessionLocal()
+        try:
+            rows = db.query(Vendor.vendor_name).all()
+            vendors = [r[0] for r in rows if r[0]]
+        finally:
+            db.close()
+    except Exception as exc:
+        print(f"[Intent] Could not load vendors: {exc}")
+
+    _vendor_cache = _VendorCache(vendors)
+    print(f"[Intent] Cached {len(vendors)} vendors for extraction.")
+    return _vendor_cache
+
+
+def refresh_vendor_cache() -> None:
+    """Force-reload vendor cache."""
+    global _vendor_cache
+    _vendor_cache = None
+    _load_vendor_cache()
+
+
+
+# ===================================================================
 #  SEMANTIC MODEL — lazy singleton
 # ===================================================================
 def _get_model():
@@ -568,9 +742,6 @@ def _match_keyword_intent(user_message: str) -> IntentDetection | None:
     has_po_id = _extract_po_id(user_message) is not None
 
     for rule in KEYWORD_INTENT_RULES:
-        if rule.intent in {"generate_invoice", "get_po_status", "stock_arrival"} and not has_po_id:
-            continue
-
         for pattern in rule.patterns:
             if pattern.search(normalized):
                 return IntentDetection(
@@ -588,6 +759,15 @@ def _match_keyword_intent(user_message: str) -> IntentDetection | None:
 #  CORE DETECTION
 # ===================================================================
 def detect_intent(user_message: str) -> IntentDetection:
+    if re.search(r"\b(?:how many|list|all|show me all)\b.*\b(?:orders|po|pos|purchase orders?)\b", user_message, re.I):
+        return IntentDetection(
+            intent=None,
+            confidence=1.0,
+            matched_example="list all purchase orders",
+            reason="unsupported_list_request",
+            available=True,
+        )
+
     keyword_match = _match_keyword_intent(user_message)
     if keyword_match is not None:
         return keyword_match
@@ -709,9 +889,13 @@ def _extract_item(text: str) -> str:
     normalized_text = _normalize_message(text)
 
     item_patterns = (
-        r"(?:inventory|stock|quantity|availability|available)\s+(?:for|of)\s+([a-z][a-z\s-]+)",
-        r"(?:for|of)\s+(?:an?\s+)?(?:\d+\s+)?([a-z][a-z\s-]+)",
-        r"(?:buy|order|purchase|procure|restock|reorder|receive|received|deliver|delivered|arrived|update)\s+(?:\d+\s+)?([a-z][a-z\s-]+)",
+        r"(?:inventory|stock|quantity|availability|available)\s+(?:for|of)\s+([a-z][a-z0-9\s-]+)",
+        r"(?:for|of)\s+(?:an?\s+)?(?:\d+\s+)?([a-z][a-z0-9\s-]+)",
+        r"(?:buy|order|purchase|procure|restock|reorder|receive|received|deliver|delivered|arrived|update)\s+(?:\d+\s+)?([a-z][a-z0-9\s-]+)",
+        # "11 neem tab arrived" — <quantity> <item> <arrival verb>
+        r"\b\d+\s+([a-z][a-z0-9\s-]+?)\s+(?:arrived|received|delivered|has\s+arrived|have\s+arrived)\b",
+        # "how many X", "do we have X", "are there any X", "count X"
+        r"\b(?:how many|do we have|are there any|count|do you have)\s+([a-z][a-z0-9\s-]+?)(?:\s+(?:left|remaining|in stock|available))?$",
     )
 
     phrase_candidates: list[str] = []
@@ -761,6 +945,9 @@ def _extract_item(text: str) -> str:
         normalized_text,
         flags=re.I,
     ).strip()
+    # Remove PO ID patterns so they aren't mistaken for item names
+    stripped = re.sub(r"\b\d{6}-[A-Z0-9]+-\d{3}\b", " ", stripped, flags=re.I)
+    stripped = re.sub(r"\b(?:id)\s+\S+", " ", stripped, flags=re.I)
     tokens = [t for t in stripped.split() if len(t) >= 3 and t.lower() not in _STOP_WORDS]
     if tokens:
         return " ".join(tokens[:3])  # max 3-word fallback
@@ -783,16 +970,16 @@ def _extract_po_id(text: str) -> str | None:
     if match:
         return match.group(1).upper()
 
-    # Legacy numeric:  po 5 / order #3
-    match = re.search(r"(?:po|order|#)\s*#?\s*(\d+)", text, re.I)
+    # Legacy generic:  po 5 / order #3 / po abc-999
+    match = re.search(r"(?:po|order|#)\s*#?\s*([a-z0-9-]+)", text, re.I)
     if match:
-        return match.group(1)
+        return match.group(1).upper()
 
     return None
 
 
 def _extract_vendor(text: str) -> str:
-    """Extract vendor name after from / vendor / supplier keywords."""
+    """Extract vendor name after from / vendor / supplier keywords or via DB cache."""
     normalized_text = _normalize_message(text)
     patterns = (
         r"from\s+(?:vendor\s+|supplier\s+)?(?:named\s+|called\s+)?([a-z][a-z0-9\s&.-]+?)(?:\s+(?:for|at|with|price|email|item)\b|$)",
@@ -809,6 +996,16 @@ def _extract_vendor(text: str) -> str:
             )
             if vendor and vendor.lower() not in _STOP_WORDS:
                 return vendor
+
+    # Fallback to DB exact match cache
+    try:
+        cache = _load_vendor_cache()
+        found = cache.find_vendor(text)
+        if found:
+            return found
+    except Exception:
+        pass
+
     return "default_vendor"
 
 
@@ -949,10 +1146,13 @@ def _build_plan_for_intent(intent: str, user_message: str) -> dict[str, Any] | N
         item = _extract_item(user_message)
         if item == "item":
             return None
+        vendor = _extract_vendor(user_message)
+        if vendor == "default_vendor":
+            return None  # Will trigger missing_required_arguments -> vendor clarification
         args = {
             "item": item,
             "quantity": _extract_quantity(user_message),
-            "vendor_name": _extract_vendor(user_message),
+            "vendor_name": vendor,
         }
 
     elif intent == "get_po_status":
@@ -982,13 +1182,17 @@ def _build_plan_for_intent(intent: str, user_message: str) -> dict[str, Any] | N
     elif intent == "stock_arrival":
         item = _extract_item(user_message)
         quantity = _extract_quantity(user_message, default=0)
-        if item == "item" or quantity <= 0:
+        po_id = _extract_po_id(user_message)
+        # If we have a PO ID, we can look up the item from the PO record —
+        # so only fail if BOTH item and po_id are missing, or quantity is zero.
+        if item == "item" and not po_id:
+            return None
+        if quantity <= 0 and not po_id:
             return None
         args = {
             "item": item,
-            "quantity": quantity,
+            "quantity": quantity if quantity > 0 else 0,
         }
-        po_id = _extract_po_id(user_message)
         if po_id:
             args["po_id"] = po_id
 
@@ -1002,8 +1206,16 @@ def _build_plan_for_intent(intent: str, user_message: str) -> dict[str, Any] | N
 
 
 def _get_missing_required_arguments(intent: str, user_message: str) -> list[str]:
-    if intent in {"check_inventory", "create_purchase_order"}:
+    if intent in {"check_inventory"}:
         return ["item"] if _extract_item(user_message) == "item" else []
+
+    if intent == "create_purchase_order":
+        missing: list[str] = []
+        if _extract_item(user_message) == "item":
+            missing.append("item")
+        if _extract_vendor(user_message) == "default_vendor":
+            missing.append("vendor_name")
+        return missing
 
     if intent in {"get_po_status", "generate_invoice"}:
         return ["po_id"] if _extract_po_id(user_message) is None else []
@@ -1030,14 +1242,41 @@ def _get_missing_required_arguments(intent: str, user_message: str) -> list[str]
 
     if intent == "stock_arrival":
         missing: list[str] = []
-        if _extract_item(user_message) == "item":
-            missing.append("item")
-        if _extract_quantity(user_message, default=0) <= 0:
-            missing.append("quantity")
+        has_po_id = _extract_po_id(user_message) is not None
+        # If we have a PO ID, item and quantity can be resolved from the PO record
+        if not has_po_id:
+            if _extract_item(user_message) == "item":
+                missing.append("item")
+            if _extract_quantity(user_message, default=0) <= 0:
+                missing.append("quantity")
         return missing
 
     return []
 
+
+def _get_vendor_list_prompt() -> str:
+    """Query the database for all vendors and return a formatted prompt."""
+    try:
+        from app.database.db import SessionLocal
+        from app.models.vendor import Vendor
+
+        db = SessionLocal()
+        try:
+            vendors = db.query(Vendor).order_by(Vendor.vendor_name).all()
+            if vendors:
+                vendor_lines = [f"  {i+1}. {v.vendor_name}" for i, v in enumerate(vendors)]
+                return (
+                    "Which vendor should I place this order with? "
+                    "Here are the available vendors:\n"
+                    + "\n".join(vendor_lines)
+                    + "\n\nPlease type the vendor name."
+                )
+        finally:
+            db.close()
+    except Exception:
+        pass
+
+    return "Which vendor should I place this order with?"
 
 def build_clarification_response(intent: str | None, user_message: str) -> str | None:
     if not intent:
@@ -1050,6 +1289,7 @@ def build_clarification_response(intent: str | None, user_message: str) -> str |
     prompts = {
         ("check_inventory", "item"): "Which item should I check in inventory?",
         ("create_purchase_order", "item"): "Which item should I create the purchase order for?",
+        ("create_purchase_order", "vendor_name"): _get_vendor_list_prompt(),
         ("get_po_status", "po_id"): "Which PO ID should I check?",
         ("generate_invoice", "po_id"): "Which PO ID should I generate the invoice for?",
         ("add_vendor", "vendor_name"): "What is the vendor name?",
@@ -1093,6 +1333,11 @@ def classify_and_plan(
     if detection.intent is None:
         return None, metadata
 
+    if detection.intent == "get_po_status" and re.search(r"\b(?:how many|all|list)\b", user_message, re.I):
+        metadata["intent"] = None
+        metadata["reason"] = "unsupported_list_request"
+        return None, metadata
+
     missing_arguments = _get_missing_required_arguments(detection.intent, user_message)
     if missing_arguments:
         metadata["reason"] = "missing_required_arguments"
@@ -1120,5 +1365,6 @@ def preload_model() -> None:
     _get_intent_embeddings()
     _get_semantic_index()
     _load_item_cache()
+    _load_vendor_cache()
     elapsed = (time.time() - t0) * 1000
     print(f"[Intent] Preload complete in {elapsed:.0f}ms.")

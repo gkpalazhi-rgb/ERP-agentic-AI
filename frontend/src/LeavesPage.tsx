@@ -23,7 +23,7 @@ export default function LeavesPage({ userRole, userId }: LeavesPageProps) {
   const [filter, setFilter] = useState('');
   const [actionLoading, setActionLoading] = useState<number | null>(null);
 
-  const isAdmin = userRole === 'administrator';
+  const isAdmin = userRole === 'administrator' || userRole === 'admin';
 
   const fetchLeaves = () => {
     setLoading(true);
