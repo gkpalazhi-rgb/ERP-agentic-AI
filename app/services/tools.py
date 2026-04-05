@@ -69,7 +69,7 @@ def _resolve_inventory_item(item: str, db):
 
         similarity = SequenceMatcher(None, normalized_query, normalized_name).ratio()
 
-        if normalized_query in normalized_name or normalized_name in normalized_query:
+        if re.search(rf"\b{re.escape(normalized_query)}\b", normalized_name, re.I) or re.search(rf"\b{re.escape(normalized_name)}\b", normalized_query, re.I):
             score = 0.9 + (0.05 * token_overlap) + (0.05 * similarity)
         elif common_tokens:
             score = (0.65 * token_overlap) + (0.2 * prefix_overlap) + (0.15 * similarity)
@@ -89,23 +89,11 @@ def _resolve_inventory_item(item: str, db):
 # Check inventory
 def get_inventory(item: str, db, user_id: int = 1):
 
-    # Split item phrase into words to search individually or together
-    words = item.lower().split()
-    
-    query = db.query(Inventory)
-    for word in words:
-        query = query.filter(Inventory.item_name.ilike(f"%{word}%"))
-        
-    products = query.all()
-
-    if not products:
-        # Also try a direct substring match if word split was too strict
+    resolved_item = _resolve_inventory_item(item, db)
+    if resolved_item:
+        products = [resolved_item]
+    else:
         products = db.query(Inventory).filter(Inventory.item_name.ilike(f"%{item.lower()}%")).all()
-
-    if not products:
-        resolved_item = _resolve_inventory_item(item, db)
-        if resolved_item:
-            products = [resolved_item]
 
     if not products:
         return {
@@ -130,6 +118,83 @@ def get_inventory(item: str, db, user_id: int = 1):
         "quantity": total_qty,
         "message": "Found multiple matching items:\n" + "\n".join(result_lines)
     }
+
+
+def get_low_stock_items(db, threshold: int = 50, user_id: int = 1):
+    try:
+        threshold_value = int(threshold)
+    except (TypeError, ValueError):
+        threshold_value = 50
+
+    if threshold_value <= 0:
+        threshold_value = 50
+
+    low_stock = (
+        db.query(Inventory)
+        .filter(Inventory.quantity < threshold_value)
+        .order_by(Inventory.quantity.asc(), Inventory.item_name.asc())
+        .all()
+    )
+
+    if not low_stock:
+        return {
+            "threshold": threshold_value,
+            "count": 0,
+            "items": [],
+            "message": f"No low stock items found below {threshold_value} units.",
+        }
+
+    preview_limit = 25
+    lines = [f"Low stock items (below {threshold_value} units):"]
+    for record in low_stock[:preview_limit]:
+        item_code = record.item_code or "N/A"
+        lines.append(f" - {record.item_name} ({item_code}): {record.quantity}")
+    if len(low_stock) > preview_limit:
+        lines.append(f" ...and {len(low_stock) - preview_limit} more item(s).")
+
+    payload_items = [
+        {
+            "item_code": record.item_code,
+            "item_name": record.item_name,
+            "quantity": record.quantity,
+        }
+        for record in low_stock[:50]
+    ]
+
+    return {
+        "threshold": threshold_value,
+        "count": len(low_stock),
+        "items": payload_items,
+        "truncated": len(low_stock) > 50,
+        "message": "\n".join(lines),
+    }
+
+def remove_expired_stock(db, item: str, quantity: int, reason: str = "expired", user_id: int = 1):
+    if not item or item.strip().lower() in {"item", "items", ""}:
+        return {"error": "Please provide a valid item name to remove from stock."}
+    if quantity <= 0:
+        return {"error": "Quantity to remove must be greater than zero."}
+
+    # Find closest match safely
+    product = _resolve_inventory_item(item, db)
+
+    if not product:
+        return {"error": f"Item '{item}' not found in inventory."}
+
+    if product.quantity < quantity:
+        return {"error": f"Cannot remove {quantity} units. Only {product.quantity} units of '{product.item_name}' available in stock."}
+
+    product.quantity -= quantity
+    db.commit()
+
+    return {
+        "status": "Stock Removed",
+        "item": product.item_name,
+        "quantity_removed": quantity,
+        "remaining_quantity": product.quantity,
+        "message": f"Successfully removed {quantity} units of '{product.item_name}' due to: {reason}. Remaining stock: {product.quantity}.",
+    }
+
 
 # --- Dynamic PO ID helper ---
 def _generate_po_id(item_code: str, db) -> str:
@@ -245,16 +310,120 @@ def create_purchase_order(item: str, quantity: int, db, vendor_name: str = "defa
     }
 
 
-# Add vendor
-def add_vendor(vendor_name: str, vendor_code: str, item_category: str, location: str, db, email: str | None = None, user_id: int = 1):
-    vendor_kwargs = {
-        "vendor_code": vendor_code,
-        "vendor_name": vendor_name,
-        "location": location,
-        "item_category": item_category,
+def cancel_purchase_order(
+    po_id: str | int,
+    db,
+    cancellation_reason: str | None = None,
+    user_id: int = 1,
+):
+    from app.services.email_service import send_po_cancellation_email
+
+    po = _resolve_purchase_order(po_id, db)
+    if not po:
+        return {"error": f"Purchase order with ID '{po_id}' not found."}
+
+    current_status = (po.status or "Pending").strip()
+    normalized_status = current_status.lower()
+
+    if normalized_status == "cancelled":
+        return {
+            "status": "PO Already Cancelled",
+            "po_id": po.po_id or str(po.id),
+            "message": f"Purchase order {po.po_id or po.id} is already cancelled."
+        }
+
+    if normalized_status == "delivered":
+        return {
+            "error": f"Purchase order {po.po_id or po.id} is already delivered and cannot be cancelled."
+        }
+
+    po.status = "Cancelled"
+    db.commit()
+    db.refresh(po)
+
+    reason_text = (cancellation_reason or "Cancelled by requester.").strip()
+    email_result = {"email_sent": False, "reason": "Vendor not found in database"}
+    vendor_record = db.query(Vendor).filter(
+        Vendor.vendor_name.ilike(f"%{po.vendor}%")
+    ).first()
+
+    if vendor_record and vendor_record.email:
+        email_result = send_po_cancellation_email(
+            vendor_name=vendor_record.vendor_name,
+            vendor_email=vendor_record.email,
+            po_id=po.po_id or str(po.id),
+            item_name=po.item_name,
+            quantity=po.quantity,
+            cancellation_reason=reason_text,
+        )
+    elif vendor_record and not vendor_record.email:
+        email_result = {
+            "email_sent": False,
+            "reason": f"No email on file for vendor '{vendor_record.vendor_name}'",
+        }
+
+    return {
+        "status": "PO Cancelled",
+        "po_id": po.po_id or str(po.id),
+        "item": po.item_name,
+        "quantity": po.quantity,
+        "vendor": po.vendor,
+        "previous_status": current_status,
+        "cancellation_reason": reason_text,
+        "email_notification": email_result,
+        "message": f"Purchase order {po.po_id or po.id} has been cancelled.",
     }
-    if email is not None:
-        vendor_kwargs["email"] = email
+
+
+# --- Vendor helpers ---
+def _generate_vendor_code(vendor_name: str, db) -> str:
+    base = re.sub(r"[^A-Z0-9]+", "", (vendor_name or "").upper())
+    base = base[:4] or "VEND"
+    prefix = f"V{base}"
+
+    existing_codes = db.query(Vendor.vendor_code).filter(Vendor.vendor_code.ilike(f"{prefix}%")).all()
+    max_seq = 0
+    for (code,) in existing_codes:
+        match = re.search(r"(\d+)$", code or "")
+        if match:
+            max_seq = max(max_seq, int(match.group(1)))
+
+    return f"{prefix}{max_seq + 1:03d}"
+
+
+# Add vendor
+def add_vendor(
+    vendor_name: str,
+    db,
+    vendor_code: str | None = None,
+    item_category: str | None = None,
+    location: str | None = None,
+    email: str | None = None,
+    item_name: str | None = None,
+    price: float | None = None,
+    user_id: int = 1,
+):
+    if not vendor_name or not vendor_name.strip():
+        return {"error": "Vendor name is required."}
+
+    normalized_name = vendor_name.strip()
+    normalized_category = (item_category or item_name or "General").strip()
+    normalized_location = (location or "Unknown").strip()
+    normalized_email = email.strip() if isinstance(email, str) and email.strip() else None
+    normalized_code = vendor_code.strip().upper() if isinstance(vendor_code, str) and vendor_code.strip() else _generate_vendor_code(normalized_name, db)
+
+    existing = db.query(Vendor).filter(Vendor.vendor_code == normalized_code).first()
+    if existing:
+        normalized_code = _generate_vendor_code(normalized_name, db)
+
+    vendor_kwargs = {
+        "vendor_code": normalized_code,
+        "vendor_name": normalized_name,
+        "location": normalized_location,
+        "item_category": normalized_category,
+    }
+    if normalized_email is not None:
+        vendor_kwargs["email"] = normalized_email
 
     vendor = Vendor(**vendor_kwargs)
 
@@ -265,12 +434,21 @@ def add_vendor(vendor_name: str, vendor_code: str, item_category: str, location:
     return {
         "status": "Vendor Added",
         "vendor_code": vendor.vendor_code,
-        "email": email
+        "email": normalized_email,
+        "item_category": vendor.item_category,
+        "location": vendor.location,
+        "note": "Price is not stored in vendor schema." if price is not None else None,
     }
 
 
-# Update vendor details (especially email)
-def update_vendor(vendor_name: str, db, email: str | None = None, user_id: int = 1):
+# Update vendor details (email supported, price ignored for backward compatibility)
+def update_vendor(
+    vendor_name: str,
+    db,
+    email: str | None = None,
+    price: float | None = None,
+    user_id: int = 1,
+):
     vendor = db.query(Vendor).filter(
         Vendor.vendor_name.ilike(f"%{vendor_name}%")
     ).first()
@@ -281,13 +459,17 @@ def update_vendor(vendor_name: str, db, email: str | None = None, user_id: int =
     updated_fields = []
     if email is not None:
         vendor.email = email
-        updated_fields.append(f"email → {email}")
+        updated_fields.append(f"email -> {email}")
+
+    if price is not None:
+        updated_fields.append("price ignored (not tracked in vendor schema)")
 
     if not updated_fields:
-        return {"error": "No fields to update. Provide email."}
+        return {"error": "No fields to update. Provide email (price updates are not supported)."}
 
-    db.commit()
-    db.refresh(vendor)
+    if email is not None:
+        db.commit()
+        db.refresh(vendor)
 
     return {
         "status": "Vendor Updated",
@@ -464,7 +646,7 @@ def update_inventory_stock(item: str, quantity: int, db, po_id=None, user_id: in
                 return {"error": f"No pending Purchase Order found for '{item}'. Please provide a PO ID to verify this stock arrival."}
 
         # 2. UPDATE INVENTORY
-        product = db.query(Inventory).filter(Inventory.item_name.ilike(f"%{item_lower}%")).first()
+        product = _resolve_inventory_item(item_lower, db)
 
         if product:
             product.quantity += quantity
@@ -489,3 +671,74 @@ def update_inventory_stock(item: str, quantity: int, db, po_id=None, user_id: in
         }
     except Exception as e:
         return {"error": f"Verification failed: {str(e)}"}
+
+# Get leaves today
+def get_leaves_today(db, user_id: int = 1):
+    today = datetime.now().date()
+    # Find all leave applications for today matching 'date'
+    leaves = db.query(LeaveApplication).filter(
+        LeaveApplication.leave_date == today
+    ).all()
+    
+    if not leaves:
+        return {"message": "No one is on leave today.", "date": str(today)}
+        
+    lines = [f"Leaves for today ({today}):"]
+    for l in leaves:
+        status_info = f"[{l.admin_remark}]" if l.admin_remark else "[Pending]" if not getattr(l, 'status', None) else f"[{getattr(l, 'status', 'Pending')}]"
+        lines.append(f" - {l.username} (Type: {l.leave_type}) Reason: {l.reason} {status_info}")
+        
+    return {"message": "\n".join(lines), "count": len(leaves), "date": str(today)}
+
+# Generate daily purchase report
+def generate_daily_purchase_report(db, user_id: int = 1):
+    today = datetime.now().date()
+    
+    # Query all POs created today 
+    # Use exact date bounds or cast depending on DB. SQLite allows Startswith.
+    # We will fetch all and filter in memory to be safe across DB backends.
+    today_str = today.strftime("%Y-%m-%d")
+    all_pos = db.query(PurchaseOrder).all()
+    
+    today_pos = [po for po in all_pos if po.created_at and isinstance(po.created_at, datetime) and po.created_at.date() == today]
+    # For string-based dates
+    if not today_pos:
+        today_pos = [po for po in all_pos if str(po.created_at).startswith(today_str)]
+        
+    if not today_pos:
+        return {"message": f"No purchase orders were processed today ({today_str}).", "date": today_str}
+        
+    report = [
+        "==================================================",
+        "           DAILY PURCHASE REPORT",
+        f"           DATE: {today_str}",
+        "=================================================="
+    ]
+    
+    total_spend = 0.0
+    
+    for idx, po in enumerate(today_pos, 1):
+        # Resolve MRP 
+        price = 0.0
+        inv_item = db.query(Inventory).filter(Inventory.item_name.ilike(f"%{po.item_name}%")).first()
+        if inv_item and inv_item.mrp:
+            price = float(inv_item.mrp)
+            
+        total_price = price * po.quantity
+        total_spend += total_price
+        
+        report.append(f"{idx}. PO ID: {po.po_id or po.id} | Vendor: {po.vendor}")
+        report.append(f"   Item: {po.item_name} (Qty: {po.quantity})")
+        report.append(f"   Rate: ₹{price:.2f} | Total: ₹{total_price:.2f}")
+        report.append("   -----------------------------------------------")
+        
+    report.append(f"GRAND TOTAL DECLARED: ₹{total_spend:.2f}")
+    report.append("==================================================")
+    
+    return {
+        "message": "\n".join(report),
+        "total_spend": total_spend,
+        "count": len(today_pos)
+    }
+
+

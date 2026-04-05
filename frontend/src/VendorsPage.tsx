@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Users, Search, Plus, MapPin, Tag, Mail } from 'lucide-react';
+import { Users, Search, Plus, MapPin, Tag, Mail, Edit2, X } from 'lucide-react';
 
 interface Vendor {
   id: string;
@@ -14,6 +14,45 @@ const VendorsPage: React.FC = () => {
   const [vendors, setVendors] = useState<Vendor[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
+  const [isModalOpen, setIsModalOpen] = useState(false);
+  const [modalMode, setModalMode] = useState<'add' | 'edit'>('add');
+  const [formData, setFormData] = useState<Partial<Vendor>>({});
+  const [saving, setSaving] = useState(false);
+
+  const openModal = (mode: 'add' | 'edit', vendor?: Vendor) => {
+    setModalMode(mode);
+    setFormData(vendor || { vendor_code: '', vendor_name: '', location: '', item_category: '', email: '' });
+    setIsModalOpen(true);
+  };
+
+  const handleSave = async () => {
+    setSaving(true);
+    try {
+      const token = localStorage.getItem('erp_token');
+      const method = modalMode === 'add' ? 'POST' : 'PUT';
+      const url = modalMode === 'add' ? '/vendors' : `/vendors/${formData.vendor_code}`;
+      
+      const res = await fetch(url, {
+        method,
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify(formData)
+      });
+      
+      if (res.ok) {
+        setIsModalOpen(false);
+        fetchVendors();
+      } else {
+        alert('Failed to save vendor');
+      }
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setSaving(false);
+    }
+  };
 
   useEffect(() => {
     fetchVendors();
@@ -50,8 +89,9 @@ const VendorsPage: React.FC = () => {
   }
 
   return (
-    <div className="p-8 animate-fadeIn flex-1 bg-[#F5E6D3] overflow-y-auto">
-      <div className="max-w-6xl mx-auto space-y-6">
+    <>
+      <div className="p-8 animate-fadeIn flex-1 bg-[#F5E6D3] overflow-y-auto">
+        <div className="max-w-6xl mx-auto space-y-6">
         
         {/* Header Section */}
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-white/60 p-6 rounded-2xl border border-[#E8D8C8] shadow-sm backdrop-blur-sm">
@@ -75,7 +115,9 @@ const VendorsPage: React.FC = () => {
               />
             </div>
             
-            <button className="flex-shrink-0 bg-[#8B2C2C] hover:bg-[#A33535] text-white px-4 py-2 rounded-xl text-sm font-medium transition-all shadow-sm flex items-center gap-2">
+            <button 
+              onClick={() => openModal('add')}
+              className="flex-shrink-0 bg-[#8B2C2C] hover:bg-[#A33535] text-white px-4 py-2 rounded-xl text-sm font-medium transition-all shadow-sm flex items-center gap-2">
               <Plus className="w-4 h-4" />
               Add Vendor
             </button>
@@ -93,6 +135,11 @@ const VendorsPage: React.FC = () => {
                   </span>
                   <h3 className="font-bold text-[#4B2E2B] text-lg leading-tight group-hover:text-[#8B2C2C] transition-colors">{vendor.vendor_name}</h3>
                 </div>
+                <button 
+                  onClick={() => openModal('edit', vendor)}
+                  className="p-2 text-[#A8927B] hover:text-[#8B2C2C] hover:bg-[#F5E6D3] rounded-lg transition-colors">
+                  <Edit2 className="w-4 h-4" />
+                </button>
               </div>
 
               <div className="space-y-2 mt-4 pt-4 border-t border-[#F5E6D3]">
@@ -139,6 +186,102 @@ const VendorsPage: React.FC = () => {
         
       </div>
     </div>
+
+      {/* Modal */}
+      {isModalOpen && (
+        <div className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center p-4 z-[9999]">
+          <div className="bg-white rounded-2xl shadow-xl w-full max-w-md overflow-hidden animate-fadeIn">
+            <div className="flex items-center justify-between p-5 border-b border-[#F0E0CC]">
+              <h2 className="text-lg font-bold text-[#4B2E2B]">
+                {modalMode === 'add' ? 'Add New Vendor' : 'Edit Vendor'}
+              </h2>
+              <button 
+                onClick={() => setIsModalOpen(false)}
+                className="p-2 text-[#A8927B] hover:text-[#8B2C2C] hover:bg-[#F5E6D3] rounded-full transition-colors"
+                disabled={saving}
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+            
+            <div className="p-5 space-y-4">
+              <div>
+                <label className="block text-xs font-semibold text-[#8B7355] uppercase tracking-wider mb-1">Vendor Code</label>
+                <input 
+                  type="text" 
+                  value={formData.vendor_code || ''}
+                  onChange={(e) => setFormData({...formData, vendor_code: e.target.value})}
+                  disabled={modalMode === 'edit'}
+                  className="w-full px-4 py-2 border border-[#E8D8C8] rounded-xl text-sm focus:outline-none focus:border-[#8B2C2C] disabled:bg-[#F5E6D3] disabled:text-[#A8927B]"
+                  placeholder="e.g. V-001"
+                />
+              </div>
+              
+              <div>
+                <label className="block text-xs font-semibold text-[#8B7355] uppercase tracking-wider mb-1">Vendor Name</label>
+                <input 
+                  type="text" 
+                  value={formData.vendor_name || ''}
+                  onChange={(e) => setFormData({...formData, vendor_name: e.target.value})}
+                  className="w-full px-4 py-2 border border-[#E8D8C8] rounded-xl text-sm focus:outline-none focus:border-[#8B2C2C]"
+                  placeholder="e.g. Acme Corp"
+                />
+              </div>
+              
+              <div>
+                <label className="block text-xs font-semibold text-[#8B7355] uppercase tracking-wider mb-1">Category</label>
+                <input 
+                  type="text" 
+                  value={formData.item_category || ''}
+                  onChange={(e) => setFormData({...formData, item_category: e.target.value})}
+                  className="w-full px-4 py-2 border border-[#E8D8C8] rounded-xl text-sm focus:outline-none focus:border-[#8B2C2C]"
+                  placeholder="e.g. Raw Materials"
+                />
+              </div>
+              
+              <div>
+                <label className="block text-xs font-semibold text-[#8B7355] uppercase tracking-wider mb-1">Location</label>
+                <input 
+                  type="text" 
+                  value={formData.location || ''}
+                  onChange={(e) => setFormData({...formData, location: e.target.value})}
+                  className="w-full px-4 py-2 border border-[#E8D8C8] rounded-xl text-sm focus:outline-none focus:border-[#8B2C2C]"
+                  placeholder="e.g. New York, NY"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-[#8B7355] uppercase tracking-wider mb-1">Email</label>
+                <input 
+                  type="email" 
+                  value={formData.email || ''}
+                  onChange={(e) => setFormData({...formData, email: e.target.value})}
+                  className="w-full px-4 py-2 border border-[#E8D8C8] rounded-xl text-sm focus:outline-none focus:border-[#8B2C2C]"
+                  placeholder="contact@example.com"
+                />
+              </div>
+            </div>
+            
+            <div className="p-5 border-t border-[#F0E0CC] flex justify-end gap-3 bg-[#FAF5F0]">
+              <button 
+                onClick={() => setIsModalOpen(false)}
+                disabled={saving}
+                className="px-4 py-2 text-sm font-medium text-[#6F4E37] hover:bg-[#F0E0CC] rounded-xl transition-all"
+              >
+                Cancel
+              </button>
+              <button 
+                onClick={handleSave}
+                disabled={saving || !formData.vendor_code || !formData.vendor_name}
+                className="px-4 py-2 bg-[#8B2C2C] hover:bg-[#A33535] disabled:opacity-50 disabled:cursor-not-allowed text-white text-sm font-medium rounded-xl shadow-sm transition-all flex items-center gap-2"
+              >
+                {saving ? 'Saving...' : 'Save Vendor'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </>
   );
 }
 

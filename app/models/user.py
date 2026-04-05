@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, DateTime
+from sqlalchemy import Column, Integer, String, DateTime, Text
 from datetime import datetime, timezone
 from app.database.db import Base
 
@@ -11,5 +11,5 @@ class User(Base):
     email = Column(String, unique=True, index=True, nullable=True)
     password_hash = Column(String, nullable=True)
     role = Column(String, default="employee")
+    accessible_features = Column(Text, nullable=True)
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
-

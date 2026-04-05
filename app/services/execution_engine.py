@@ -4,17 +4,25 @@ from app.services.tool_registry import TOOL_REGISTRY
 from app.models.erp_logs import ERPAPILog
 from app.models.user import User
 from app.models.vendor import Vendor
+from app.services.feature_access import (
+    effective_feature_access,
+    tools_allowed_by_features,
+)
 
 
-READ_ONLY_TOOLS = {"get_inventory", "get_po_status", "get_vendors", "generate_purchase_invoice"}
+READ_ONLY_TOOLS = {"get_inventory", "get_low_stock_items", "get_po_status", "get_vendors", "generate_purchase_invoice"}
 EMPLOYEE_ALLOWED_TOOLS = {
     "get_inventory",
+    "get_low_stock_items",
     "create_purchase_order",
+    "cancel_purchase_order",
     "get_po_status",
     "generate_purchase_invoice",
     "apply_leave",
     "update_inventory_stock",
     "get_vendors",
+    "get_leaves_today",
+    "generate_daily_purchase_report",
 }
 ADMIN_ALLOWED_TOOLS = set(TOOL_REGISTRY.keys())
 
@@ -46,6 +54,13 @@ def execute_plan(plan: dict, db, user_id: int = 1, user_role: str | None = None)
 
     effective_role = user_role or current_user.role or "employee"
     allowed_tools = _allowed_tools_for_role(effective_role)
+    feature_access = effective_feature_access(
+        effective_role,
+        getattr(current_user, "accessible_features", None),
+    )
+    feature_tools = tools_allowed_by_features(feature_access)
+    if feature_tools:
+        allowed_tools = allowed_tools & feature_tools
 
     for index, step in enumerate(plan["steps"]):
 
@@ -70,8 +85,9 @@ def execute_plan(plan: dict, db, user_id: int = 1, user_role: str | None = None)
                                 "step_index": index,
                                 "user_id": user_id,
                                 "role": effective_role,
+                                "features": feature_access,
                                 "args": args,
-                                "reason": "role_blocked",
+                                "reason": "role_or_feature_blocked",
                             },
                             default=str,
                         ),
@@ -82,7 +98,7 @@ def execute_plan(plan: dict, db, user_id: int = 1, user_role: str | None = None)
                 )
                 db.commit()
                 return (
-                    f"Authorization failed: role '{effective_role}' cannot execute '{tool_name}'."
+                    f"Authorization failed: this user is not allowed to execute '{tool_name}'."
                 )
 
             tool_function = TOOL_REGISTRY[tool_name]["function"]
@@ -254,6 +270,17 @@ def execute_plan(plan: dict, db, user_id: int = 1, user_role: str | None = None)
             cost_text = f" Total estimated cost is ₹{last_result['total_cost']:.2f}." if last_result['total_cost'] > 0 else ""
             return f"Order #{last_result['po_id']} for {last_result['quantity']} {last_result['item']} from {last_result['vendor'].title()} is actively {last_result['status']}.{cost_text}"
 
+        if last_result.get("status") in {"PO Cancelled", "PO Already Cancelled"}:
+            email_info = last_result.get("email_notification", {})
+            email_text = ""
+            if last_result.get("status") == "PO Already Cancelled":
+                return last_result.get("message", f"Purchase order {last_result.get('po_id')} is already cancelled.")
+            if email_info.get("email_sent"):
+                email_text = f" Cancellation email sent to {email_info['recipient']}."
+            elif email_info.get("reason"):
+                email_text = f" (Cancellation email not sent: {email_info['reason']})"
+            return f"Purchase order {last_result['po_id']} has been cancelled.{email_text}"
+
         if "po_id" in last_result:
             email_info = last_result.get("email_notification", {})
             email_text = ""
@@ -262,7 +289,6 @@ def execute_plan(plan: dict, db, user_id: int = 1, user_role: str | None = None)
             elif email_info.get("reason"):
                 email_text = f" (Email not sent: {email_info['reason']})"
             return f"Purchase order created with ID {last_result['po_id']}.{email_text}"
-
         if "vendor_id" in last_result:
             return f"Vendor added successfully with ID {last_result['vendor_id']}."
 
@@ -279,6 +305,9 @@ def execute_plan(plan: dict, db, user_id: int = 1, user_role: str | None = None)
             if last_result.get("message"):
                 return last_result["message"]
             return f"Inventory for {last_result['item']} is {last_result['quantity']} units."
+
+        if "message" in last_result:
+            return last_result["message"]
 
     if isinstance(last_result, list):
         if len(last_result) > 0 and isinstance(last_result[0], dict) and "vendor_name" in last_result[0]:

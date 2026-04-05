@@ -355,6 +355,36 @@ INTENT_EXAMPLES: dict[str, list[str]] = {
         "warehouse unloaded items",
         "mark po 260324-AYU001-001 as delivered",
     ],
+    "get_leaves_today": [
+        "who all are on leave",
+        "show me leaves today",
+        "who is absent",
+        "anyone on leave today",
+        "get leaves list",
+    ],
+    "generate_daily_purchase_report": [
+        "show all the purchase orders done today",
+        "report of purchases done in that day",
+        "report of today's purchases",
+        "daily purchase report",
+        "what did we order today",
+    ],
+    "get_low_stock_items": [
+        "show low stock items",
+        "list low stock products",
+        "what items are below reorder level",
+        "show stock alerts",
+        "find items below 50 units",
+        "which products are running low",
+    ],
+    "cancel_purchase_order": [
+        "cancel po 260324-AYU001-001",
+        "cancel purchase order 25",
+        "void po 55",
+        "cancel order 1002",
+        "please cancel this purchase order",
+        "stop po 260405-PSOIL-001",
+    ],
 }
 
 
@@ -368,6 +398,11 @@ INTENT_TO_TOOL: dict[str, str] = {
     "update_vendor": "update_vendor",
     "apply_leave": "apply_leave",
     "stock_arrival": "update_inventory_stock",
+    "get_leaves_today": "get_leaves_today",
+    "generate_daily_purchase_report": "generate_daily_purchase_report",
+    "remove_expired_stock": "remove_expired_stock",
+    "get_low_stock_items": "get_low_stock_items",
+    "cancel_purchase_order": "cancel_purchase_order",
 }
 
 
@@ -379,6 +414,48 @@ class _KeywordIntentRule:
 
 
 KEYWORD_INTENT_RULES: tuple[_KeywordIntentRule, ...] = (
+    _KeywordIntentRule(
+        intent="get_leaves_today",
+        patterns=(
+            re.compile(r"\b(?:who all are|who is|show(?: me)?)\b.*\bleave[s]?\b", re.I),
+            re.compile(r"\b(?:anyone on|who is on)\b.*\bleave\b", re.I),
+        ),
+        confidence=0.98,
+    ),
+    _KeywordIntentRule(
+        intent="generate_daily_purchase_report",
+        patterns=(
+            re.compile(r"\b(?:show|generate|report of)\b.*\b(?:purchases?|purchase orders?)\b.*\b(?:today|in that day)\b", re.I),
+            re.compile(r"\b(?:daily purchase report|report of purchases)\b", re.I),
+        ),
+        confidence=0.98,
+    ),
+    _KeywordIntentRule(
+        intent="remove_expired_stock",
+        patterns=(
+            re.compile(r"\b(?:remove|discard|subtract|reduce|deduct|throw away)\b.*\b(?:expired|damaged|broken)\b", re.I),
+            re.compile(r"\b(?:expired|damaged)\b.*\b(?:remove|discard|reduce|deduct)\b", re.I),
+        ),
+        confidence=0.95,
+    ),
+    _KeywordIntentRule(
+        intent="get_low_stock_items",
+        patterns=(
+            re.compile(r"\b(?:show|list|get|display|find)\b.*\blow\s+stock\b", re.I),
+            re.compile(r"\blow\s+stock\b", re.I),
+            re.compile(r"\b(?:stock\s+alert|stock\s+alerts)\b", re.I),
+            re.compile(r"\b(?:below|under|less than|<)\s*\d+\s*(?:units?)?\b.*\bstock\b", re.I),
+        ),
+        confidence=0.99,
+    ),
+    _KeywordIntentRule(
+        intent="cancel_purchase_order",
+        patterns=(
+            re.compile(r"\b(?:cancel|void|stop|abort)\b.*\b(?:po|purchase order|order)\b", re.I),
+            re.compile(r"\b(?:po|purchase order|order)\b.*\b(?:cancel|void|stop)\b", re.I),
+        ),
+        confidence=0.99,
+    ),
     _KeywordIntentRule(
         intent="generate_invoice",
         patterns=(
@@ -462,6 +539,7 @@ KEYWORD_INTENT_RULES: tuple[_KeywordIntentRule, ...] = (
         patterns=(
             re.compile(r"\b(?:apply|request|submit|take|book|mark|put)\b.*\bleaves?\b", re.I),
             re.compile(r"\b(?:sick leave|casual leave|annual leave)\b", re.I),
+            re.compile(r"\bleave\b(?:,?\s+\d+|,?\s+(?:tomorrow|today|reason|full(?: day)?|half(?: day)?|sick|casual))", re.I),
         ),
         confidence=0.98,
     ),
@@ -759,15 +837,6 @@ def _match_keyword_intent(user_message: str) -> IntentDetection | None:
 #  CORE DETECTION
 # ===================================================================
 def detect_intent(user_message: str) -> IntentDetection:
-    if re.search(r"\b(?:how many|list|all|show me all)\b.*\b(?:orders|po|pos|purchase orders?)\b", user_message, re.I):
-        return IntentDetection(
-            intent=None,
-            confidence=1.0,
-            matched_example="list all purchase orders",
-            reason="unsupported_list_request",
-            available=True,
-        )
-
     keyword_match = _match_keyword_intent(user_message)
     if keyword_match is not None:
         return keyword_match
@@ -887,15 +956,16 @@ def _extract_item(text: str) -> str:
     """
     cache = _load_item_cache()
     normalized_text = _normalize_message(text)
+    normalized_text = re.sub(r"\b(\d+)\s*(ml|mg|kg|gm|g|l|lt|ltr)\b", r"\1 \2", normalized_text, flags=re.I)
 
     item_patterns = (
-        r"(?:inventory|stock|quantity|availability|available)\s+(?:for|of)\s+([a-z][a-z0-9\s-]+)",
-        r"(?:for|of)\s+(?:an?\s+)?(?:\d+\s+)?([a-z][a-z0-9\s-]+)",
-        r"(?:buy|order|purchase|procure|restock|reorder|receive|received|deliver|delivered|arrived|update)\s+(?:\d+\s+)?([a-z][a-z0-9\s-]+)",
+        r"(?:inventory|stock|quantity|availability|available)\s+(?:for|of)\s+([a-z0-9][a-z0-9\s-]+)",
+        r"(?:for|of)\s+(?:an?\s+)?(?:\d+\s+)?([a-z0-9][a-z0-9\s-]+)",
+        r"(?:buy|order|purchase|procure|restock|reorder|receive|received|deliver|delivered|arrived|update)\s+(?:\d+\s+)?([a-z0-9][a-z0-9\s-]+)",
         # "11 neem tab arrived" — <quantity> <item> <arrival verb>
         r"\b\d+\s+([a-z][a-z0-9\s-]+?)\s+(?:arrived|received|delivered|has\s+arrived|have\s+arrived)\b",
         # "how many X", "do we have X", "are there any X", "count X"
-        r"\b(?:how many|do we have|are there any|count|do you have)\s+([a-z][a-z0-9\s-]+?)(?:\s+(?:left|remaining|in stock|available))?$",
+        r"\b(?:how many|do we have|are there any|count|do you have)\s+([a-z0-9][a-z0-9\s-]+?)(?:\s+(?:left|remaining|in stock|available))?$",
     )
 
     phrase_candidates: list[str] = []
@@ -963,6 +1033,34 @@ def _extract_quantity(text: str, default: int = 1) -> int:
     return int(match.group(1)) if match else default
 
 
+def _extract_low_stock_threshold(text: str, default: int = 50) -> int:
+    threshold_patterns = (
+        r"\b(?:below|under|less than)\s*(\d+)\b",
+        r"\b(?:threshold|limit)\s*(?:of|is|=)?\s*(\d+)\b",
+        r"\bstock\s*<\s*(\d+)\b",
+    )
+    for pattern in threshold_patterns:
+        match = re.search(pattern, text, re.I)
+        if match:
+            value = int(match.group(1))
+            return value if value > 0 else default
+    return default
+
+
+def _extract_cancellation_reason(text: str) -> str | None:
+    patterns = (
+        r"\b(?:because|due to|reason)\s*[:\-]?\s*(.+)$",
+        r"\b(?:cancel|void|stop)\b.*?\b(?:for|as)\s+(.+)$",
+    )
+    for pattern in patterns:
+        match = re.search(pattern, text, re.I)
+        if match:
+            reason = match.group(1).strip(" .")
+            if reason:
+                return reason
+    return None
+
+
 def _extract_po_id(text: str) -> str | None:
     """Extract PO ID — supports both YYMMDD-CODE-NNN and plain numeric."""
     # New format:  260324-AYU001-001
@@ -1013,20 +1111,37 @@ def _extract_vendor(text: str) -> str:
 def _extract_leave_args(text: str) -> dict[str, str]:
     reason = "Personal"
     reason_patterns = [
-        r"(?:because|reason|due to)\s+(.+?)(?:\s+on|\s+tomorrow|\s+for|\.|\s*$)",
+        r"(?:because|reason|due to)[\s:]+(.+?)(?:\s+on|\s+tomorrow|\s+for|\.|\s*$|,\s*)",
         r"(?:i(?:'m| am))\s+(.+?)(?:\s+on|\s+need|\.|,|\s*$)",
     ]
     for pattern in reason_patterns:
         match = re.search(pattern, text, re.I)
         if match:
             reason = match.group(1).strip()
+            # If there's an appointment, we preserve the text.
             break
 
     lowered = text.lower()
-    if "sick" in lowered:
-        reason = "Sick"
-    elif "personal" in lowered:
-        reason = "Personal"
+    if reason == "Personal":
+        # Extract leftover text as a fallback reason
+        cleaned = re.sub(r"\b(can|you|please|i|want|to|apply|request|submit|take|book|mark|put|leave|leaves|for|on|full day|half day|1st half|2nd half|first half|second half)\b", " ", text, flags=re.I)
+        # Remove date formats
+        cleaned = re.sub(r"\b\d{1,2}(?:st|nd|rd|th)?\s+(?:of\s+)?(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\b", " ", cleaned, flags=re.I)
+        cleaned = re.sub(r"\b(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\s+\d{1,2}(?:st|nd|rd|th)?\b", " ", cleaned, flags=re.I)
+        cleaned = re.sub(r"\b\d{4}-\d{2}-\d{2}\b", " ", cleaned)
+        # Remove relative/weekday date words from reason text
+        cleaned = re.sub(r"\b(?:today|tomorrow|day after tomorrow)\b", " ", cleaned, flags=re.I)
+        cleaned = re.sub(r"\bnext\s+(?:monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b", " ", cleaned, flags=re.I)
+        cleaned = re.sub(r"\b(?:monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b", " ", cleaned, flags=re.I)
+        cleaned = re.sub(r"[,._/-]", " ", cleaned).strip()
+        cleaned = " ".join(cleaned.split())
+        
+        if len(cleaned) > 3 and not cleaned.isspace():
+            reason = cleaned.capitalize()
+        elif "sick" in lowered:
+            reason = "Sick"
+        elif "personal" in lowered:
+            reason = "Personal"
 
     today = datetime.now()
     if "tomorrow" in lowered:
@@ -1037,13 +1152,14 @@ def _extract_leave_args(text: str) -> dict[str, str]:
             leave_date = match.group(1)
         else:
             match = re.search(
-                r"(\d{1,2})(?:st|nd|rd|th)?\s+(?:of\s+)?"
-                r"(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*",
+                r"(?:(\d{1,2})(?:st|nd|rd|th)?\s+(?:of\s+)?)?"
+                r"(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*"
+                r"(?:\s+(\d{1,2})(?:st|nd|rd|th)?)?",
                 text,
                 re.I,
             )
-            if match:
-                day = int(match.group(1))
+            if match and (match.group(1) or match.group(3)):
+                day = int(match.group(1) or match.group(3))
                 month_map = {
                     "jan": 1, "feb": 2, "mar": 3, "apr": 4,
                     "may": 5, "jun": 6, "jul": 7, "aug": 8,
@@ -1071,18 +1187,26 @@ def _extract_vendor_add_args(text: str) -> dict[str, Any]:
     if vendor_name == "default_vendor":
         vendor_name = "Unknown"
 
-    item_name = _extract_item(text)
-
-    price = _extract_price(text) or 0.0
-
     email = _extract_email(text)
+    item_name = _extract_item(text)
+    item_category = "General" if item_name == "item" else item_name
+
+    vendor_code = None
+    code_match = re.search(r"(?:vendor\s*code|code)\s*[:#-]?\s*([A-Z0-9-]{3,})", text, re.I)
+    if code_match:
+        vendor_code = code_match.group(1).upper()
+
+    location = None
+    location_match = re.search(r"(?:location|located at|in)\s+([a-zA-Z][a-zA-Z0-9,\\s.-]+)", text, re.I)
+    if location_match:
+        location = location_match.group(1).strip()
 
     compact_text = _normalize_message(text)
     compact_text = re.sub(r"\b(?:add|register|create|onboard|save|new)\b", " ", compact_text, flags=re.I)
     compact_text = re.sub(r"\b(?:vendor|supplier)\b", " ", compact_text, flags=re.I)
     if email:
         compact_text = compact_text.replace(email.lower(), " ")
-    compact_text = re.sub(r"\b(?:price|at|rs|inr)\b", " ", compact_text, flags=re.I)
+    compact_text = re.sub(r"\b(?:price|at|rs|inr|code|location)\b", " ", compact_text, flags=re.I)
     compact_text = re.sub(r"\b\d+(?:\.\d+)?\b", " ", compact_text)
     compact_tokens = [t for t in compact_text.split() if t.lower() not in _STOP_WORDS]
 
@@ -1102,19 +1226,17 @@ def _extract_vendor_add_args(text: str) -> dict[str, Any]:
     if item_name == "item" and len(compact_tokens) > 1:
         fallback_item = " ".join(compact_tokens[1:])
         cache = _load_item_cache()
-        item_name = cache.find_substring(fallback_item) or fallback_item
+        item_category = cache.find_substring(fallback_item) or fallback_item
 
-    if price <= 0:
-        trailing_numbers = re.findall(r"\b\d+(?:\.\d+)?\b", _normalize_message(text))
-        if trailing_numbers:
-            price = float(trailing_numbers[-1])
-
-    return {
+    args: dict[str, Any] = {
         "vendor_name": vendor_name,
-        "item_name": item_name,
-        "price": price,
+        "item_category": item_category,
+        "location": location or "Unknown",
         "email": email,
     }
+    if vendor_code:
+        args["vendor_code"] = vendor_code
+    return args
 
 
 # ---------- Vendor update arguments ----------
@@ -1122,7 +1244,6 @@ def _extract_vendor_update_args(text: str) -> dict[str, Any]:
     vendor_name = _extract_vendor(text)
 
     email = _extract_email(text)
-
     price = _extract_price(text)
 
     args: dict[str, Any] = {"vendor_name": vendor_name}
@@ -1141,6 +1262,9 @@ def _build_plan_for_intent(intent: str, user_message: str) -> dict[str, Any] | N
 
     if intent == "check_inventory":
         args = {"item": _extract_item(user_message)}
+
+    elif intent == "get_low_stock_items":
+        args = {"threshold": _extract_low_stock_threshold(user_message)}
 
     elif intent == "create_purchase_order":
         item = _extract_item(user_message)
@@ -1161,6 +1285,15 @@ def _build_plan_for_intent(intent: str, user_message: str) -> dict[str, Any] | N
             return None
         args = {"po_id": po_id}
 
+    elif intent == "cancel_purchase_order":
+        po_id = _extract_po_id(user_message)
+        if not po_id:
+            return None
+        args = {"po_id": po_id}
+        cancel_reason = _extract_cancellation_reason(user_message)
+        if cancel_reason:
+            args["cancellation_reason"] = cancel_reason
+
     elif intent == "generate_invoice":
         po_id = _extract_po_id(user_message)
         if not po_id:
@@ -1178,6 +1311,26 @@ def _build_plan_for_intent(intent: str, user_message: str) -> dict[str, Any] | N
 
     elif intent == "apply_leave":
         args = _extract_leave_args(user_message)
+
+    elif intent == "get_leaves_today":
+        args = {}
+
+    elif intent == "generate_daily_purchase_report":
+        args = {}
+
+    elif intent == "remove_expired_stock":
+        item = _extract_item(user_message)
+        quantity = _extract_quantity(user_message, default=0)
+        reason = "expired"
+        if "damaged" in user_message.lower() or "broken" in user_message.lower():
+            reason = "damaged"
+        
+        if item == "item":
+            return None
+        if quantity <= 0:
+            return None
+        
+        args = {"item": item, "quantity": quantity, "reason": reason}
 
     elif intent == "stock_arrival":
         item = _extract_item(user_message)
@@ -1217,7 +1370,7 @@ def _get_missing_required_arguments(intent: str, user_message: str) -> list[str]
             missing.append("vendor_name")
         return missing
 
-    if intent in {"get_po_status", "generate_invoice"}:
+    if intent in {"get_po_status", "generate_invoice", "cancel_purchase_order"}:
         return ["po_id"] if _extract_po_id(user_message) is None else []
 
     if intent == "add_vendor":
@@ -1225,10 +1378,6 @@ def _get_missing_required_arguments(intent: str, user_message: str) -> list[str]
         missing: list[str] = []
         if args["vendor_name"] == "Unknown":
             missing.append("vendor_name")
-        if args["item_name"] == "item":
-            missing.append("item_name")
-        if args["price"] <= 0:
-            missing.append("price")
         return missing
 
     if intent == "update_vendor":
@@ -1249,6 +1398,14 @@ def _get_missing_required_arguments(intent: str, user_message: str) -> list[str]
                 missing.append("item")
             if _extract_quantity(user_message, default=0) <= 0:
                 missing.append("quantity")
+        return missing
+
+    if intent == "remove_expired_stock":
+        missing: list[str] = []
+        if _extract_item(user_message) == "item":
+            missing.append("item")
+        if _extract_quantity(user_message, default=0) <= 0:
+            missing.append("quantity")
         return missing
 
     return []
@@ -1288,15 +1445,18 @@ def build_clarification_response(intent: str | None, user_message: str) -> str |
 
     prompts = {
         ("check_inventory", "item"): "Which item should I check in inventory?",
+        ("remove_expired_stock", "item"): "Which item has expired and needs to be removed from the inventory?",
+        ("remove_expired_stock", "quantity"): "How many units have expired and should be removed?",
         ("create_purchase_order", "item"): "Which item should I create the purchase order for?",
         ("create_purchase_order", "vendor_name"): _get_vendor_list_prompt(),
         ("get_po_status", "po_id"): "Which PO ID should I check?",
+        ("cancel_purchase_order", "po_id"): "Which PO ID should I cancel?",
         ("generate_invoice", "po_id"): "Which PO ID should I generate the invoice for?",
         ("add_vendor", "vendor_name"): "What is the vendor name?",
-        ("add_vendor", "item_name"): "Which item does this vendor supply?",
-        ("add_vendor", "price"): "What price should I save for this vendor?",
+        ("add_vendor", "item_category"): "Which item category does this vendor supply?",
+        ("add_vendor", "location"): "What is the vendor location?",
         ("update_vendor", "vendor_name"): "Which vendor should I update?",
-        ("update_vendor", "email_or_price"): "What should I update for the vendor: email, price, or both?",
+        ("update_vendor", "email_or_price"): "What should I update for the vendor: email or price?",
         ("stock_arrival", "item"): "Which item arrived?",
         ("stock_arrival", "quantity"): "How many units arrived?",
     }
@@ -1305,9 +1465,9 @@ def build_clarification_response(intent: str | None, user_message: str) -> str |
         return prompts.get((intent, missing[0]))
 
     if intent == "add_vendor":
-        return "Please share the vendor name, supplied item, and price."
+        return "Please share the vendor name."
     if intent == "update_vendor":
-        return "Please share the vendor name and what to update: email, price, or both."
+        return "Please share the vendor name and what to update: email or price."
     if intent == "stock_arrival":
         return "Please share the item name and quantity that arrived."
 
@@ -1331,11 +1491,6 @@ def classify_and_plan(
     metadata = detection.to_dict()
 
     if detection.intent is None:
-        return None, metadata
-
-    if detection.intent == "get_po_status" and re.search(r"\b(?:how many|all|list)\b", user_message, re.I):
-        metadata["intent"] = None
-        metadata["reason"] = "unsupported_list_request"
         return None, metadata
 
     missing_arguments = _get_missing_required_arguments(detection.intent, user_message)

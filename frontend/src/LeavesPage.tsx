@@ -9,21 +9,28 @@ interface LeaveEntry {
   leave_date: string;
   leave_type: string;
   status: string;
+  admin_remark?: string;
   created_at: string;
 }
 
 interface LeavesPageProps {
   userRole: string;
   userId: number;
+  canManageLeaves: boolean;
 }
 
-export default function LeavesPage({ userRole, userId }: LeavesPageProps) {
+export default function LeavesPage({ userRole, userId, canManageLeaves }: LeavesPageProps) {
   const [leaves, setLeaves] = useState<LeaveEntry[]>([]);
   const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState('');
   const [actionLoading, setActionLoading] = useState<number | null>(null);
 
-  const isAdmin = userRole === 'administrator' || userRole === 'admin';
+  const [rejectingId, setRejectingId] = useState<number | null>(null);
+  const [rejectReason, setRejectReason] = useState('');
+
+  const normalizedRole = (userRole || '').trim().toLowerCase();
+  const isAdminRole = normalizedRole === 'administrator' || normalizedRole === 'admin' || normalizedRole === 'hr';
+  const isAdmin = canManageLeaves || isAdminRole;
 
   const fetchLeaves = () => {
     setLoading(true);
@@ -39,7 +46,7 @@ export default function LeavesPage({ userRole, userId }: LeavesPageProps) {
     fetchLeaves();
   }, []);
 
-  const handleStatusUpdate = async (leaveId: number, newStatus: 'Approved' | 'Rejected') => {
+  const handleStatusUpdate = async (leaveId: number, newStatus: 'Approved' | 'Rejected', remark?: string) => {
     setActionLoading(leaveId);
     try {
       const token = localStorage.getItem('erp_token');
@@ -49,13 +56,17 @@ export default function LeavesPage({ userRole, userId }: LeavesPageProps) {
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${token}`
         },
-        body: JSON.stringify({ status: newStatus }),
+        body: JSON.stringify({ status: newStatus, admin_remark: remark }),
       });
 
       if (res.ok) {
         setLeaves((prev) =>
-          prev.map((l) => (l.id === leaveId ? { ...l, status: newStatus } : l))
+          prev.map((l) => (l.id === leaveId ? { ...l, status: newStatus, admin_remark: remark } : l))
         );
+        if (newStatus === 'Rejected') {
+          setRejectingId(null);
+          setRejectReason('');
+        }
       }
     } catch (e) {
       console.error('Failed to update leave status', e);
@@ -196,27 +207,68 @@ export default function LeavesPage({ userRole, userId }: LeavesPageProps) {
                         <span className="font-medium text-[#4B2E2B]">Reason:</span> {leave.reason}
                       </p>
                     )}
+                    {leave.admin_remark && (
+                      <p className="text-sm text-red-700 bg-red-50 rounded-lg px-3 py-2 mt-2 border border-red-100">
+                        <span className="font-medium text-red-800">Admin Remark:</span> {leave.admin_remark}
+                      </p>
+                    )}
                   </div>
 
                   {/* Right: Action buttons (admin only, only for pending) */}
                   {isAdmin && leave.status === 'Pending' && (
                     <div className="flex sm:flex-col gap-2 flex-shrink-0">
-                      <button
-                        onClick={() => handleStatusUpdate(leave.id, 'Approved')}
-                        disabled={actionLoading === leave.id}
-                        className="flex items-center gap-1.5 px-4 py-2 rounded-xl text-xs font-semibold bg-green-50 text-green-700 border-2 border-green-200 hover:bg-green-100 hover:border-green-300 transition-all disabled:opacity-50"
-                      >
-                        <Check className="w-3.5 h-3.5" />
-                        Approve
-                      </button>
-                      <button
-                        onClick={() => handleStatusUpdate(leave.id, 'Rejected')}
-                        disabled={actionLoading === leave.id}
-                        className="flex items-center gap-1.5 px-4 py-2 rounded-xl text-xs font-semibold bg-red-50 text-red-700 border-2 border-red-200 hover:bg-red-100 hover:border-red-300 transition-all disabled:opacity-50"
-                      >
-                        <X className="w-3.5 h-3.5" />
-                        Reject
-                      </button>
+                      {rejectingId === leave.id ? (
+                        <div className="flex flex-col gap-2 w-full sm:w-48 bg-gray-50 border border-gray-200 p-2 rounded-xl">
+                          <textarea
+                            placeholder="Reason for rejection..."
+                            className="w-full text-xs p-2 rounded-lg border border-gray-300 focus:outline-none focus:ring-2 focus:ring-red-400"
+                            rows={3}
+                            value={rejectReason}
+                            onChange={(e) => setRejectReason(e.target.value)}
+                          />
+                          <div className="flex gap-2">
+                            <button
+                              onClick={() => handleStatusUpdate(leave.id, 'Rejected', rejectReason)}
+                              disabled={actionLoading === leave.id || !rejectReason.trim()}
+                              className="flex-1 px-2 py-1.5 rounded-lg text-xs font-semibold bg-red-600 text-white hover:bg-red-700 transition-all disabled:opacity-50"
+                            >
+                              Confirm
+                            </button>
+                            <button
+                              onClick={() => {
+                                setRejectingId(null);
+                                setRejectReason('');
+                              }}
+                              disabled={actionLoading === leave.id}
+                              className="flex-1 px-2 py-1.5 rounded-lg text-xs font-semibold bg-white border border-gray-300 text-gray-700 hover:bg-gray-50 transition-all disabled:opacity-50"
+                            >
+                              Cancel
+                            </button>
+                          </div>
+                        </div>
+                      ) : (
+                        <>
+                          <button
+                            onClick={() => handleStatusUpdate(leave.id, 'Approved')}
+                            disabled={actionLoading === leave.id}
+                            className="flex items-center justify-center gap-1.5 px-4 py-2 rounded-xl text-xs font-semibold bg-green-50 text-green-700 border-2 border-green-200 hover:bg-green-100 hover:border-green-300 transition-all disabled:opacity-50 w-full"
+                          >
+                            <Check className="w-3.5 h-3.5" />
+                            Approve
+                          </button>
+                          <button
+                            onClick={() => {
+                              setRejectingId(leave.id);
+                              setRejectReason('');
+                            }}
+                            disabled={actionLoading === leave.id}
+                            className="flex items-center justify-center gap-1.5 px-4 py-2 rounded-xl text-xs font-semibold bg-red-50 text-red-700 border-2 border-red-200 hover:bg-red-100 hover:border-red-300 transition-all disabled:opacity-50 w-full"
+                          >
+                            <X className="w-3.5 h-3.5" />
+                            Reject
+                          </button>
+                        </>
+                      )}
                     </div>
                   )}
 

@@ -16,8 +16,9 @@ export default function PurchaseOrdersPage() {
   const [orders, setOrders] = useState<PurchaseOrder[]>([]);
   const [statusFilter, setStatusFilter] = useState('');
   const [loading, setLoading] = useState(true);
+  const [cancellingPoId, setCancellingPoId] = useState<string | null>(null);
 
-  useEffect(() => {
+  const fetchOrders = () => {
     setLoading(true);
     const params = new URLSearchParams();
     if (statusFilter) params.set('status', statusFilter);
@@ -27,7 +28,50 @@ export default function PurchaseOrdersPage() {
       .then((r) => r.json())
       .then((data) => { setOrders(data); setLoading(false); })
       .catch(() => setLoading(false));
+  };
+
+  useEffect(() => {
+    fetchOrders();
   }, [statusFilter]);
+
+  const handleCancelPo = async (po: PurchaseOrder) => {
+    const poRef = po.po_id || String(po.id);
+    const confirmCancel = window.confirm(`Cancel PO ${poRef}?`);
+    if (!confirmCancel) return;
+
+    const reason = window.prompt('Optional cancellation reason for vendor email:', '') || '';
+    const token = localStorage.getItem('erp_token');
+    setCancellingPoId(poRef);
+
+    try {
+      const res = await fetch(`/purchase-orders/${encodeURIComponent(poRef)}/cancel`, {
+        method: 'PUT',
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ reason }),
+      });
+
+      const data = await res.json();
+      if (!res.ok) {
+        const msg = data?.error?.message || data?.detail || 'Failed to cancel purchase order.';
+        alert(msg);
+        return;
+      }
+
+      const emailInfo = data?.email_notification;
+      const emailMsg = emailInfo?.email_sent
+        ? `\nCancellation email sent to ${emailInfo.recipient}.`
+        : (emailInfo?.reason ? `\nCancellation email not sent: ${emailInfo.reason}` : '');
+      alert(`PO ${poRef} cancelled successfully.${emailMsg}`);
+      fetchOrders();
+    } catch {
+      alert('Unable to cancel PO. Please try again.');
+    } finally {
+      setCancellingPoId(null);
+    }
+  };
 
   const statusColors: Record<string, string> = {
     Pending: 'bg-amber-100 text-amber-700 border-amber-200',
@@ -47,7 +91,7 @@ export default function PurchaseOrdersPage() {
 
           {/* Status filter */}
           <div className="flex gap-2">
-            {['', 'Pending', 'Delivered'].map((s) => (
+            {['', 'Pending', 'Delivered', 'Cancelled'].map((s) => (
               <button
                 key={s}
                 onClick={() => setStatusFilter(s)}
@@ -84,6 +128,7 @@ export default function PurchaseOrdersPage() {
                     <th className="text-left py-3.5 px-5 text-xs font-semibold text-[#8B7355] uppercase tracking-wider">Vendor</th>
                     <th className="text-right py-3.5 px-5 text-xs font-semibold text-[#8B7355] uppercase tracking-wider">Qty</th>
                     <th className="text-center py-3.5 px-5 text-xs font-semibold text-[#8B7355] uppercase tracking-wider">Status</th>
+                    <th className="text-center py-3.5 px-5 text-xs font-semibold text-[#8B7355] uppercase tracking-wider">Action</th>
                     <th className="text-right py-3.5 px-5 text-xs font-semibold text-[#8B7355] uppercase tracking-wider">Date</th>
                   </tr>
                 </thead>
@@ -107,6 +152,19 @@ export default function PurchaseOrdersPage() {
                         }`}>
                           {po.status}
                         </span>
+                      </td>
+                      <td className="py-3 px-5 text-center">
+                        {po.status === 'Pending' ? (
+                          <button
+                            onClick={() => handleCancelPo(po)}
+                            disabled={cancellingPoId === (po.po_id || String(po.id))}
+                            className="px-3 py-1.5 rounded-lg border border-red-300 text-red-700 text-xs font-medium hover:bg-red-50 disabled:opacity-50 disabled:cursor-not-allowed"
+                          >
+                            {cancellingPoId === (po.po_id || String(po.id)) ? 'Cancelling...' : 'Cancel'}
+                          </button>
+                        ) : (
+                          <span className="text-xs text-[#A8927B]">-</span>
+                        )}
                       </td>
                       <td className="py-3 px-5 text-right text-xs text-[#A8927B]">
                         {new Date(po.created_at).toLocaleDateString('en-IN', {

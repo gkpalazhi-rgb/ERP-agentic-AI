@@ -14,6 +14,10 @@ from app.services.intent_classifier import _get_model
 logger = logging.getLogger(__name__)
 
 
+_CANCEL_PO_PATTERN = re.compile(r"\b(?:cancel|void|stop|abort)\b", re.I)
+_PO_REF_PATTERN = re.compile(r"\b(?:po|purchase order|order)\b", re.I)
+
+
 INTENT_PHRASES: dict[str, list[str]] = {
     "inventory_query": [
         "check inventory for item",
@@ -142,6 +146,54 @@ INTENT_PHRASES: dict[str, list[str]] = {
         "mark 50 dhanwantharam as arrived",
         "po delivered update inventory",
     ],
+    "get_leaves_today_intent": [
+        "who all are on leave today",
+        "list leaves today",
+        "whose leave is approved",
+        "leave today",
+        "show me today's leaves",
+        "employees on leave",
+        "who is taking leave today",
+        "get leaves today"
+    ],
+    "get_vendors_intent": [
+        "get vendors",
+        "list suppliers",
+        "show all vendors",
+        "who are our vendors",
+        "find available vendors",
+        "which vendors do we have"
+    ],
+    "generate_daily_purchase_report_intent": [
+        "purchase report",
+        "today's purchases",
+        "daily report",
+        "generate purchase report",
+        "daily purchase summary"
+    ],
+    "remove_expired_stock_intent": [
+        "remove expired",
+        "throw away damaged",
+        "discard expired stock",
+        "subtract damaged goods from inventory",
+        "remove damaged item",
+        "item is expired"
+    ],
+    "low_stock_inventory_intent": [
+        "show low stock items",
+        "list low stock products",
+        "stock alerts",
+        "show items below 50 units",
+        "which items are running low",
+        "find products under threshold stock"
+    ],
+    "purchase_order_cancel": [
+        "cancel purchase order",
+        "cancel po 260405-PSOIL-001",
+        "void po 55",
+        "stop order 1002",
+        "cancel this po"
+    ]
 }
 
 
@@ -152,6 +204,12 @@ INTENT_TO_TOOL = {
     "purchase_invoice_create": "generate_purchase_invoice",
     "purchase_order_verify": "get_po_status",
     "inventory_update": "update_inventory_stock",
+    "get_leaves_today_intent": "get_leaves_today",
+    "get_vendors_intent": "get_vendors",
+    "generate_daily_purchase_report_intent": "generate_daily_purchase_report",
+    "remove_expired_stock_intent": "remove_expired_stock",
+    "low_stock_inventory_intent": "get_low_stock_items",
+    "purchase_order_cancel": "cancel_purchase_order",
 }
 
 
@@ -269,16 +327,17 @@ class IntentResolver:
         return sorted(scores, key=lambda score: score.confidence, reverse=True)
 
     def _extract_item_name(self, text: str) -> str | None:
+        normalized_text = re.sub(r"\b(\d+)\s*(ml|mg|kg|gm|g|l|lt|ltr)\b", r"\1 \2", text, flags=re.I)
         patterns = (
-            r"\b(?:of|for|item|stock of|inventory for|update inventory for|order for)\s+([A-Za-z][A-Za-z0-9 .&/-]+?)(?:\s+(?:today|tomorrow|next|po|invoice|qty|quantity|units|kg|pcs|boxes|nos)\b|$)",
+            r"\b(?:of|for|item|stock of|inventory for|update inventory for|order for)\s+([A-Za-z0-9][A-Za-z0-9 .&/-]+?)(?:\s+(?:today|tomorrow|next|po|invoice|qty|quantity|units|kg|pcs|boxes|nos)\b|$)",
             r"\b(?:cement|steel rods|sand|tiles|wire|bricks|capsules|bottles|amber bottles|glass bottles|brahmi chm)\b",
             # "11 neem tab arrived" — <quantity> <item> <arrival verb>
-            r"\b\d+\s+([A-Za-z][A-Za-z0-9 .&/-]+?)\s+(?:arrived|received|delivered|has\s+arrived|have\s+arrived)\b",
+            r"\b\d+\s+([A-Za-z0-9][A-Za-z0-9 .&/-]+?)\s+(?:arrived|received|delivered|has\s+arrived|have\s+arrived)\b",
             # "mark 50 dhanwantharam as arrived"
-            r"\b\d+\s+([A-Za-z][A-Za-z0-9 .&/-]+?)\s+(?:as\s+)?(?:arrived|received|delivered)\b",
+            r"\b\d+\s+([A-Za-z0-9][A-Za-z0-9 .&/-]+?)\s+(?:as\s+)?(?:arrived|received|delivered)\b",
         )
         for pattern in patterns:
-            match = re.search(pattern, text, re.I)
+            match = re.search(pattern, normalized_text, re.I)
             if match:
                 value = match.group(1) if match.lastindex else match.group(0)
                 cleaned = re.sub(
@@ -287,8 +346,11 @@ class IntentResolver:
                     value,
                     flags=re.I,
                 )
+                cleaned = re.sub(r"\s+(?:is|are)\s+(?:expired|damaged|broken|missing)\b.*$", "", cleaned, flags=re.I)
+                cleaned = re.sub(r"\b(?:expired|damaged|broken|missing)\b.*$", "", cleaned, flags=re.I)
                 cleaned = re.sub(r"\b\d+\b", " ", cleaned)
                 cleaned = re.sub(r"\s+", " ", cleaned).strip(" -")
+                cleaned = re.sub(r"^(?:is|are)\s+", "", cleaned, flags=re.I).strip()
                 if cleaned:
                     return cleaned
         return None
@@ -334,6 +396,19 @@ class IntentResolver:
             return (today + timedelta(days=delta)).strftime("%Y-%m-%d")
         return None
 
+    def _extract_low_stock_threshold(self, text: str) -> int | None:
+        patterns = (
+            r"\b(?:below|under|less than)\s*(\d+)\b",
+            r"\b(?:threshold|limit)\s*(?:of|is|=)?\s*(\d+)\b",
+            r"\bstock\s*<\s*(\d+)\b",
+        )
+        for pattern in patterns:
+            match = re.search(pattern, text, re.I)
+            if match:
+                value = int(match.group(1))
+                return value if value > 0 else 50
+        return None
+
     def _extract_employee_name(self, text: str, detected_intents: list[str]) -> str | None:
         if "leave_application" not in detected_intents:
             return None
@@ -369,6 +444,7 @@ class IntentResolver:
             "item_name": self._extract_item_name(text),
             "quantity": self._extract_quantity(text),
             "date": self._extract_date(text),
+            "low_stock_threshold": self._extract_low_stock_threshold(text),
             "employee_name": self._extract_employee_name(text, detected_intents),
             "po_number": self._extract_po_number(text),
             "invoice_number": self._extract_invoice_number(text),
@@ -376,6 +452,24 @@ class IntentResolver:
 
     def resolve(self, user_input: str) -> dict[str, Any]:
         normalized_input = _normalize_text(user_input)
+        if _CANCEL_PO_PATTERN.search(normalized_input) and _PO_REF_PATTERN.search(normalized_input):
+            return {
+                "intents": [{"intent": "purchase_order_cancel", "confidence": 1.0}],
+                "entities": self._extract_entities(user_input, ["purchase_order_cancel"]),
+                "is_multi_intent": False,
+                "raw_input": user_input,
+                "resolver_mode": self.mode,
+            }
+
+        if re.search(r"\b(?:low stock|stock alert|stock alerts|running low)\b", normalized_input):
+            return {
+                "intents": [{"intent": "low_stock_inventory_intent", "confidence": 1.0}],
+                "entities": self._extract_entities(user_input, ["low_stock_inventory_intent"]),
+                "is_multi_intent": False,
+                "raw_input": user_input,
+                "resolver_mode": self.mode,
+            }
+
         scores = self._semantic_scores(normalized_input) if self.mode == "semantic" else self._keyword_scores(normalized_input)
         if not scores:
             scores = [_IntentScore(intent="unknown_intent", confidence=0.0)]
@@ -414,6 +508,8 @@ class IntentChainOrchestrator:
 
     def detect_chain(self, resolved: dict[str, Any]) -> dict[str, Any] | None:
         detected = {item["intent"] for item in resolved.get("intents", [])}
+        if "purchase_order_cancel" in detected:
+            return None
         for chain_name, steps in self.KNOWN_CHAINS.items():
             if set(steps).issubset(detected):
                 return {"name": chain_name, "steps": steps, "status": "pending"}
@@ -498,6 +594,23 @@ class AgentRouter:
 
         reason_match = re.search(r"(?:because|due to|reason)\s+(.+?)(?:\s+(?:on|for|tomorrow|today)|$)", raw_input, re.I)
         reason = reason_match.group(1).strip() if reason_match else "Personal"
+        if reason == "Personal":
+            cleaned_reason = re.sub(
+                r"\b(?:leave|apply|for|on|today|tomorrow|next|full|day|half|first|second|1st|2nd|request|submit|book|mark|put)\b",
+                " ",
+                raw_input,
+                flags=re.I,
+            )
+            cleaned_reason = re.sub(
+                r"\b(?:monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b",
+                " ",
+                cleaned_reason,
+                flags=re.I,
+            )
+            cleaned_reason = re.sub(r"[,._/-]", " ", cleaned_reason)
+            cleaned_reason = " ".join(cleaned_reason.split()).strip()
+            if len(cleaned_reason) > 2:
+                reason = cleaned_reason
         return {
             "reason": reason,
             "leave_date": entities.get("date") or datetime.now().strftime("%Y-%m-%d"),
@@ -514,6 +627,10 @@ class AgentRouter:
             if not item_name:
                 return None
             return {"type": "tool", "name": tool_name, "args": {"item": item_name}}
+
+        if intent_name == "low_stock_inventory_intent":
+            threshold = entities.get("low_stock_threshold") or 50
+            return {"type": "tool", "name": tool_name, "args": {"threshold": threshold}}
 
         if intent_name == "purchase_order_create":
             item_name = entities.get("item_name")
@@ -539,6 +656,12 @@ class AgentRouter:
             return {"type": "tool", "name": tool_name, "args": {"po_id": po_number}}
 
         if intent_name == "purchase_order_verify":
+            po_number = entities.get("po_number")
+            if not po_number:
+                return None
+            return {"type": "tool", "name": tool_name, "args": {"po_id": po_number}}
+
+        if intent_name == "purchase_order_cancel":
             po_number = entities.get("po_number")
             if not po_number:
                 return None
@@ -612,6 +735,21 @@ class AgentRouter:
 
         if intents[0]["intent"] == "unknown_intent":
             return self.existing_keyword_logic(user_input)
+
+        if any(intent_payload.get("intent") == "purchase_order_cancel" for intent_payload in intents):
+            cancel_step = self._single_intent_step("purchase_order_cancel", resolved)
+            if cancel_step is not None:
+                return {
+                    "type": "action",
+                    "steps": [cancel_step],
+                    "intent_detection": {
+                        "source": "semantic_router",
+                        "resolver_mode": resolved.get("resolver_mode"),
+                        "resolved_intents": intents,
+                        "entities": resolved.get("entities"),
+                        "is_multi_intent": resolved.get("is_multi_intent", False),
+                    },
+                }
 
         if resolved.get("chain"):
             chain_plan = self._build_chain_plan(resolved)

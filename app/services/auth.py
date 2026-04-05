@@ -9,12 +9,17 @@ Provides:
 
 import os
 from datetime import datetime, timedelta, timezone
+from typing import Iterable
 
 import bcrypt
 import jwt
 from sqlalchemy.orm import Session
 
 from app.models.user import User
+from app.services.feature_access import (
+    effective_feature_access,
+    serialize_feature_access,
+)
 
 # ---------------------------------------------------------------------------
 # Configuration
@@ -67,6 +72,7 @@ def register_user(
     password: str,
     email: str | None = None,
     role: str = "employee",
+    feature_access: Iterable[str] | None = None,
 ) -> dict:
     """Register a new user. Returns user info + JWT token."""
 
@@ -81,11 +87,14 @@ def register_user(
         if existing_email:
             return {"error": f"Email '{email}' is already registered."}
 
+    stored_feature_access = serialize_feature_access(feature_access)
+
     user = User(
         username=username,
         email=email,
         password_hash=hash_password(password),
         role=role,
+        accessible_features=stored_feature_access,
     )
 
     db.add(user)
@@ -99,6 +108,7 @@ def register_user(
         "username": user.username,
         "email": user.email,
         "role": user.role,
+        "feature_access": effective_feature_access(user.role, user.accessible_features),
         "token": token,
     }
 
@@ -123,6 +133,7 @@ def login_user(db: Session, username: str, password: str) -> dict:
         "username": user.username,
         "email": user.email,
         "role": user.role,
+        "feature_access": effective_feature_access(user.role, user.accessible_features),
         "token": token,
     }
 

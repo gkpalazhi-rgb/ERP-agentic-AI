@@ -16,7 +16,8 @@ export default defineConfig({
       '/inventory': 'http://127.0.0.1:8000',
       '/purchase-orders': 'http://127.0.0.1:8000',
       '/leaves': 'http://127.0.0.1:8000',
-      '/vendors': 'http://127.0.0.1:8000'
+      '/vendors': 'http://127.0.0.1:8000',
+      '/users': 'http://127.0.0.1:8000'
     }
   }
 });

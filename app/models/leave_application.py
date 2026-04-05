@@ -12,4 +12,5 @@ class LeaveApplication(Base):
     leave_date = Column(Date)
     leave_type = Column(String)  # Full Day, 1st Half, 2nd Half
     status = Column(String, default="Pending")
+    admin_remark = Column(Text, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)

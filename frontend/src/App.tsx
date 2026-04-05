@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import {
   Send, Plus, MessageSquare, Bot, Trash2, LogOut,
-  LayoutDashboard, Package, ShoppingCart, MessageCircle, CalendarDays, Users
+  LayoutDashboard, Package, ShoppingCart, MessageCircle, CalendarDays, Users, Settings
 } from 'lucide-react';
 import LoginPage from './LoginPage';
 import DashboardPage from './DashboardPage';
@@ -9,12 +9,14 @@ import InventoryPage from './InventoryPage';
 import PurchaseOrdersPage from './PurchaseOrdersPage';
 import LeavesPage from './LeavesPage';
 import VendorsPage from './VendorsPage';
+import UsersPage from './UsersPage';
 
 interface Message {
   id: number;
   sender: 'user' | 'ai';
   text: string;
   timestamp: string;
+  metadata?: any;
 }
 
 interface Conversation {
@@ -27,26 +29,131 @@ interface AuthUser {
   user_id: number;
   username: string;
   role: string;
+  feature_access?: string[];
 }
 
-type Page = 'chat' | 'dashboard' | 'inventory' | 'purchase-orders' | 'leaves' | 'vendors';
+type Page = 'chat' | 'dashboard' | 'inventory' | 'purchase-orders' | 'leaves' | 'vendors' | 'users';
+
+const DEFAULT_FEATURES_BY_ROLE: Record<string, string[]> = {
+  admin: ['chat', 'dashboard', 'inventory', 'purchase_orders', 'vendors', 'leaves', 'users'],
+  administrator: ['chat', 'dashboard', 'inventory', 'purchase_orders', 'vendors', 'leaves', 'users'],
+  employee: ['chat', 'dashboard', 'inventory', 'vendors', 'leaves'],
+  staff: ['chat', 'dashboard', 'inventory', 'vendors', 'leaves'],
+  user: ['chat', 'dashboard', 'inventory', 'vendors', 'leaves'],
+};
+
+const PAGE_TO_FEATURE: Record<Page, string> = {
+  chat: 'chat',
+  dashboard: 'dashboard',
+  inventory: 'inventory',
+  'purchase-orders': 'purchase_orders',
+  vendors: 'vendors',
+  leaves: 'leaves',
+  users: 'users',
+};
+
+const normalizeFeature = (value: string): string => {
+  const normalized = value.trim().toLowerCase().replace(/[-\s]+/g, '_');
+  const aliases: Record<string, string> = {
+    leave: 'leaves',
+    purchase_order: 'purchase_orders',
+  };
+  return aliases[normalized] || normalized;
+};
+
+const getAllowedFeatures = (authUser: AuthUser | null): string[] => {
+  if (!authUser) return ['chat'];
+  const roleKey = normalizeFeature(authUser.role || 'employee');
+  if (roleKey === 'admin' || roleKey === 'administrator') {
+    return DEFAULT_FEATURES_BY_ROLE.admin;
+  }
+  const explicit = Array.isArray(authUser.feature_access)
+    ? authUser.feature_access.map((f) => normalizeFeature(String(f))).filter(Boolean)
+    : [];
+  if (explicit.length > 0) {
+    return Array.from(new Set(explicit));
+  }
+  return DEFAULT_FEATURES_BY_ROLE[roleKey] || ['chat'];
+};
+
+const canManageLeaves = (authUser: AuthUser | null): boolean => {
+  if (!authUser) return false;
+  const roleKey = normalizeFeature(authUser.role || '');
+  if (roleKey === 'admin' || roleKey === 'administrator' || roleKey === 'hr') {
+    return true;
+  }
+  const features = new Set(getAllowedFeatures(authUser));
+  return features.has('leaves') && features.has('dashboard');
+};
+
+const firstAllowedPage = (features: string[]): Page => {
+  const allowedFeatureSet = new Set(features);
+  const orderedPages: Page[] = ['dashboard', 'chat', 'inventory', 'purchase-orders', 'vendors', 'leaves', 'users'];
+  const match = orderedPages.find((page) => allowedFeatureSet.has(PAGE_TO_FEATURE[page]));
+  return match || 'chat';
+};
+
+const toDisplayText = (value: unknown, fallback: string): string => {
+  if (typeof value === 'string' && value.trim()) return value;
+  if (typeof value === 'number' || typeof value === 'boolean') return String(value);
+  if (value && typeof value === 'object') {
+    try {
+      return JSON.stringify(value);
+    } catch {
+      return fallback;
+    }
+  }
+  return fallback;
+};
+
+const extractApiErrorMessage = (payload: unknown, fallback: string): string => {
+  if (!payload || typeof payload !== 'object') return fallback;
+  const candidate = payload as {
+    detail?: unknown;
+    message?: unknown;
+    error?: unknown;
+  };
+
+  if (typeof candidate.error === 'object' && candidate.error !== null) {
+    const errorMessage = (candidate.error as { message?: unknown }).message;
+    if (typeof errorMessage === 'string' && errorMessage.trim()) return errorMessage;
+  }
+  if (typeof candidate.detail === 'string' && candidate.detail.trim()) return candidate.detail;
+  if (typeof candidate.message === 'string' && candidate.message.trim()) return candidate.message;
+  if (typeof candidate.error === 'string' && candidate.error.trim()) return candidate.error;
+  return fallback;
+};
+
+const extractVendorNamesFromPrompt = (text: string): string[] => {
+  const names = Array.from(text.matchAll(/^\s*\d+\.\s+(.+)$/gm))
+    .map((m) => m[1].trim())
+    .filter(Boolean);
+  return Array.from(new Set(names));
+};
 
 function App() {
   // Auth state
   const [token, setToken] = useState<string | null>(() => localStorage.getItem('erp_token'));
   const [user, setUser] = useState<AuthUser | null>(() => {
     const saved = localStorage.getItem('erp_user');
-    return saved ? JSON.parse(saved) : null;
+    if (!saved) return null;
+    try {
+      return JSON.parse(saved) as AuthUser;
+    } catch {
+      return null;
+    }
   });
 
   // Navigation
   const [currentPage, setCurrentPage] = useState<Page>(() => {
     const saved = localStorage.getItem('erp_user');
-    if (saved) {
-      const parsed = JSON.parse(saved);
-      if (parsed.role !== 'admin' && parsed.role !== 'administrator') return 'chat';
+    if (!saved) return 'chat';
+    try {
+      const parsed = JSON.parse(saved) as AuthUser;
+      return firstAllowedPage(getAllowedFeatures(parsed));
+    } catch {
+      return 'chat';
     }
-    return 'dashboard';
   });
 
   // Chat state
@@ -55,6 +162,7 @@ function App() {
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [messages, setMessages] = useState<Message[]>([]);
   const [currentSessionId, setCurrentSessionId] = useState<string | null>(null);
+  const [vendors, setVendors] = useState<{vendor_code: string, vendor_name: string}[]>([]);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
@@ -77,7 +185,15 @@ function App() {
           return res.json();
         })
         .then((data) => {
-          setUser({ user_id: data.user_id, username: data.username, role: data.role });
+          const hydratedUser: AuthUser = {
+            user_id: data.user_id,
+            username: data.username,
+            role: data.role,
+            feature_access: Array.isArray(data.feature_access) ? data.feature_access : undefined,
+          };
+          setUser(hydratedUser);
+          localStorage.setItem('erp_user', JSON.stringify(hydratedUser));
+          setCurrentPage(firstAllowedPage(getAllowedFeatures(hydratedUser)));
         })
         .catch(() => {
           handleLogout();
@@ -90,11 +206,7 @@ function App() {
     setUser(newUser);
     localStorage.setItem('erp_token', newToken);
     localStorage.setItem('erp_user', JSON.stringify(newUser));
-    if (newUser.role !== 'admin' && newUser.role !== 'administrator') {
-      setCurrentPage('chat');
-    } else {
-      setCurrentPage('dashboard');
-    }
+    setCurrentPage(firstAllowedPage(getAllowedFeatures(newUser)));
   };
 
   const handleLogout = () => {
@@ -106,6 +218,15 @@ function App() {
     localStorage.removeItem('erp_token');
     localStorage.removeItem('erp_user');
   };
+
+  useEffect(() => {
+    if (!user) return;
+    const allowedFeatures = new Set(getAllowedFeatures(user));
+    const requiredFeature = PAGE_TO_FEATURE[currentPage];
+    if (!allowedFeatures.has(requiredFeature)) {
+      setCurrentPage(firstAllowedPage(Array.from(allowedFeatures)));
+    }
+  }, [user, currentPage]);
 
   const loadHistory = async () => {
     if (!user) return;
@@ -123,7 +244,23 @@ function App() {
   };
 
   useEffect(() => {
-    if (user) loadHistory();
+    if (user) {
+      const features = new Set(getAllowedFeatures(user));
+      if (features.has('chat')) {
+        loadHistory();
+      } else {
+        setConversations([]);
+      }
+
+      if (features.has('vendors')) {
+        fetch('/vendors', { headers: { Authorization: `Bearer ${token}` } })
+          .then(res => res.ok ? res.json() : [])
+          .then(data => setVendors(data))
+          .catch(e => console.error('Failed to preload vendors', e));
+      } else {
+        setVendors([]);
+      }
+    }
   }, [user]);
 
   const loadSessionChat = async (sessionId: string) => {
@@ -168,11 +305,16 @@ function App() {
     }
   };
 
-  const handleSend = async () => {
-    if (!inputValue.trim() || !user) return;
+  const handleSend = async (directText?: string) => {
+    let userText = '';
+    if (typeof directText === 'string') {
+      userText = directText.trim();
+    } else {
+      userText = inputValue.trim();
+      setInputValue('');
+    }
 
-    const userText = inputValue.trim();
-    setInputValue('');
+    if (!userText || !user) return;
 
     const tempId = Date.now();
     const newUserMsg: Message = {
@@ -207,17 +349,29 @@ function App() {
         const newAiMsg: Message = {
           id: Date.now() + 1,
           sender: 'ai',
-          text: data.response || data.error || 'Done.',
+          text: toDisplayText(data.response ?? data.error, 'Done.'),
           timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+          metadata: data.intent_detection,
         };
 
         setMessages((prev) => [...prev, newAiMsg]);
       } else {
         let errorText = 'Sorry, something went wrong. Please try again.';
         try {
-          const errData = await res.json();
-          errorText = errData.detail || (errData.error && errData.error.message) || (typeof errData.error === 'string' ? errData.error : errorText);
-        } catch {}
+          const rawBody = await res.text();
+          if (rawBody) {
+            try {
+              const errData = JSON.parse(rawBody);
+              errorText = extractApiErrorMessage(errData, errorText);
+            } catch {
+              errorText = `Request failed (${res.status}): ${rawBody.slice(0, 160)}`;
+            }
+          } else {
+            errorText = `Request failed (${res.status}).`;
+          }
+        } catch {
+          errorText = `Request failed (${res.status}).`;
+        }
         setMessages((prev) => [
           ...prev,
           { id: Date.now() + 1, sender: 'ai', text: errorText, timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) },
@@ -227,7 +381,12 @@ function App() {
       console.error('Chat error', e);
       setMessages((prev) => [
         ...prev,
-        { id: Date.now() + 1, sender: 'ai', text: 'Sorry, something went wrong.', timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) },
+        {
+          id: Date.now() + 1,
+          sender: 'ai',
+          text: 'Unable to reach backend API. Please ensure the server is running on http://127.0.0.1:8000.',
+          timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+        },
       ]);
     } finally {
       setIsTyping(false);
@@ -254,12 +413,23 @@ function App() {
     { key: 'purchase-orders', label: 'Orders', icon: ShoppingCart },
     { key: 'vendors', label: 'Vendors', icon: Users },
     { key: 'leaves', label: 'Leaves', icon: CalendarDays },
+    { key: 'users', label: 'Users', icon: Settings },
   ];
 
-  const employeeTabs = ['chat', 'inventory', 'vendors'];
-  const navItems = user.role === 'admin' || user.role === 'administrator' 
-    ? allNavItems 
-    : allNavItems.filter(item => employeeTabs.includes(item.key));
+  const allowedFeatureSet = new Set(getAllowedFeatures(user));
+  const navItems = allNavItems.filter((item) => allowedFeatureSet.has(PAGE_TO_FEATURE[item.key]));
+
+  const lastMessage = messages.length > 0 ? messages[messages.length - 1] : null;
+  const lastAiText = lastMessage?.sender === 'ai' ? lastMessage.text : '';
+  const isVendorClarificationPrompt =
+    typeof lastAiText === 'string' &&
+    /which vendor should i place this order with|available vendors/i.test(lastAiText);
+  const vendorNamesFromPrompt = isVendorClarificationPrompt
+    ? extractVendorNamesFromPrompt(lastAiText)
+    : [];
+  const quickVendorOptions = vendorNamesFromPrompt.length > 0
+    ? vendorNamesFromPrompt
+    : vendors.map((v) => v.vendor_name);
 
   return (
     <div className="flex h-screen bg-[#F5E6D3]">
@@ -267,9 +437,9 @@ function App() {
       <aside className="w-64 bg-[#4B2E2B] text-white flex flex-col">
         {/* Brand + User */}
         <div className="p-5 pb-2">
-          <div className="flex items-center gap-2 mb-5">
-            <div className="w-8 h-8 rounded-lg bg-white/10 flex items-center justify-center">
-              <Bot className="w-4 h-4 text-[#D4A574]" />
+          <div className="flex items-center gap-3 mb-5">
+            <div className="w-10 h-10 bg-white rounded-full flex items-center justify-center overflow-hidden shadow-sm border border-white/20">
+              <img src="/logo.png" alt="Logo" className="w-full h-full object-contain p-0.5" />
             </div>
             <span className="text-base font-bold tracking-tight">ERP AI</span>
           </div>
@@ -347,7 +517,9 @@ function App() {
                       <span className="text-xs truncate text-[#E8D8C8]">{conv.title}</span>
                     </button>
                     <button
+                      type="button"
                       onClick={(e) => {
+                        e.preventDefault();
                         e.stopPropagation();
                         handleDeleteChat(conv.session_id);
                       }}
@@ -374,7 +546,14 @@ function App() {
       {currentPage === 'inventory' && <InventoryPage />}
       {currentPage === 'purchase-orders' && <PurchaseOrdersPage />}
       {currentPage === 'vendors' && <VendorsPage />}
-      {currentPage === 'leaves' && <LeavesPage userRole={user.role} userId={user.user_id} />}
+      {currentPage === 'leaves' && (
+        <LeavesPage
+          userRole={user.role}
+          userId={user.user_id}
+          canManageLeaves={canManageLeaves(user)}
+        />
+      )}
+      {currentPage === 'users' && <UsersPage />}
       {currentPage === 'chat' && (
         <main className="flex-1 flex flex-col">
           <div className="flex-1 overflow-y-auto p-8">
@@ -386,6 +565,18 @@ function App() {
                   </div>
                   <p className="text-lg font-medium text-[#6B5744]">How can I help you today?</p>
                   <p className="text-sm text-[#A8927B] mt-1">Ask about inventory, purchase orders, vendors, or leaves</p>
+                  <div className="flex gap-2 mt-6 flex-wrap justify-center max-w-lg">
+                    {[
+                      "Show all purchase orders done today",
+                      "Show low stock items",
+                      "Who all are on leave today?",
+                      "Apply for leave tomorrow, Full Day, Personal",
+                    ].map((prompt, i) => (
+                      <button key={i} onClick={() => handleSend(prompt)} className="px-3 py-2 bg-white/50 border border-[#E8D8C8] rounded-xl text-xs font-medium text-[#8B7355] hover:bg-white hover:text-[#4B2E2B] transition-all shadow-sm">
+                        {prompt}
+                      </button>
+                    ))}
+                  </div>
                 </div>
               )}
 
@@ -410,7 +601,17 @@ function App() {
                     >
                       <p className="whitespace-pre-line leading-relaxed text-sm">{message.text}</p>
                     </div>
-                    <span className="text-[10px] text-[#A8927B] mt-1 px-2">{message.timestamp}</span>
+                    <span className="text-[10px] text-[#A8927B] mt-1.5 px-2 flex items-center gap-1.5 font-medium tracking-wide">
+                      {message.timestamp}
+                      {message.metadata?.source && (
+                        <>
+                          <span className="w-1 h-1 rounded-full bg-[#E5D4BB] inline-block" />
+                          <span className={`${message.metadata.source.includes('llm') ? 'text-amber-600' : 'text-green-600'}`}>
+                            Routed via {message.metadata.source} ({message.metadata.latency_ms}ms)
+                          </span>
+                        </>
+                      )}
+                    </span>
                   </div>
 
                   {message.sender === 'user' && (
@@ -441,6 +642,30 @@ function App() {
 
           <div className="border-t border-[#E5D4BB] bg-white/60 backdrop-blur-sm p-4">
             <div className="max-w-4xl mx-auto">
+              
+              {/* Quick-Insert Vendor Dropdown */}
+              {isVendorClarificationPrompt && quickVendorOptions.length > 0 && (
+                <div className="flex items-center gap-2 mb-2 px-1 animate-fadeIn">
+                  <span className="text-xs text-[#A8927B] font-medium uppercase tracking-wider">Quick Select:</span>
+                  <select 
+                    className="bg-white/80 border border-[#E8D8C8] rounded-lg text-xs px-2.5 py-1 focus:outline-none focus:border-[#8B2C2C] focus:ring-2 focus:ring-[#8B2C2C]/10 text-[#4B2E2B] font-medium shadow-sm cursor-pointer hover:bg-white transition-all"
+                    defaultValue=""
+                    disabled={isTyping}
+                    onChange={(e) => {
+                      if (e.target.value) {
+                        handleSend(`from vendor ${e.target.value}`);
+                        e.target.value = ''; // reset properly
+                      }
+                    }}
+                  >
+                    <option value="" disabled>Select vendor and send</option>
+                    {quickVendorOptions.map((vendorName) => (
+                      <option key={vendorName} value={vendorName}>{vendorName}</option>
+                    ))}
+                  </select>
+                </div>
+              )}
+
               <div className="flex gap-3 items-end">
                 <div className="flex-1">
                   <textarea
@@ -456,7 +681,7 @@ function App() {
                 </div>
                 <button
                   id="chat-send-btn"
-                  onClick={handleSend}
+                  onClick={() => handleSend()}
                   className="bg-gradient-to-r from-[#8B2C2C] to-[#A33535] hover:from-[#7A2626] hover:to-[#922F2F] text-white rounded-2xl px-5 py-3 transition-all shadow-md hover:shadow-lg disabled:opacity-50 disabled:cursor-not-allowed"
                   disabled={!inputValue.trim() || isTyping}
                 >

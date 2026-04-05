@@ -167,7 +167,7 @@ export default function DashboardPage() {
                 </div>
                 <div>
                   <p className="font-semibold text-red-700">{stats.inventory.low_stock} items low on stock</p>
-                  <p className="text-xs text-red-500 mt-0.5">Items with less than 10 units remaining</p>
+                  <p className="text-xs text-red-500 mt-0.5">Items with less than 50 units remaining</p>
                 </div>
               </div>
             ) : (
@@ -195,7 +195,7 @@ export default function DashboardPage() {
                       contentStyle={{ borderRadius: '12px', border: 'none', boxShadow: '0 4px 12px rgba(0,0,0,0.1)', fontSize: '12px' }}
                       itemStyle={{ color: '#2D1B18', fontWeight: 600 }}
                   />
-                  <Bar dataKey="items" radius={[4, 4, 0, 0]}>
+                  <Bar dataKey="items" radius={[4, 4, 0, 0]} minPointSize={8}>
                     <Cell fill="#4B9B44" />
                     <Cell fill="#E53E3E" />
                   </Bar>

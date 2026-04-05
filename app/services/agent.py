@@ -75,9 +75,10 @@ def _build_planner_prompt(user_message: str, chat_history: str) -> str:
         "No markdown. No explanation. Keep values short. "
         "Use {'type':'conversation','response':'...'} for casual chat. "
         "Use {'type':'action','steps':[...]} for ERP actions. "
-        "Allowed tools: get_inventory(item), create_purchase_order(item, quantity, vendor_name), "
+        "Allowed tools: get_inventory(item), get_low_stock_items(threshold), create_purchase_order(item, quantity, vendor_name), cancel_purchase_order(po_id, cancellation_reason), "
         "get_po_status(po_id), generate_purchase_invoice(po_id), get_vendors(), add_vendor(vendor_name, item_name, price, email), "
-        "update_vendor(vendor_name, email, price), apply_leave(reason, leave_date, leave_type), update_inventory_stock(item, quantity, po_id). "
+        "update_vendor(vendor_name, email, price), apply_leave(reason, leave_date, leave_type), update_inventory_stock(item, quantity, po_id), "
+        "get_leaves_today(), generate_daily_purchase_report(). "
         "Prefer a single tool step unless inventory check must be followed by a conditional reorder. "
         "Fix minor typos in item names and IDs. "
         f"Date: {today}. Context: {compact_history}. User: {user_message}"
@@ -127,7 +128,14 @@ def _continue_clarification(user_message: str, chat_history: str = ""):
         return None
 
     expected_prompt = build_clarification_response(previous_intent, original_user_message)
-    if not expected_prompt or last_agent_response != expected_prompt:
+    missing_args = previous_metadata.get("missing_arguments", [])
+    vendor_prompt_variant = (
+        previous_intent == "create_purchase_order"
+        and isinstance(missing_args, list)
+        and "vendor_name" in missing_args
+        and bool(re.search(r"(which vendor|specify a vendor|available vendors|vendor should i place)", last_agent_response, re.I))
+    )
+    if (not expected_prompt or last_agent_response != expected_prompt) and not vendor_prompt_variant:
         return None
 
     # Merge all subsequent user answers into one mega-message to extract the arg
@@ -149,6 +157,33 @@ def _continue_clarification(user_message: str, chat_history: str = ""):
                     },
                 }
         return None
+
+    # Preserve original PO context when clarification was specifically for vendor name.
+    if (
+        previous_intent == "create_purchase_order"
+        and isinstance(missing_args, list)
+        and "vendor_name" in missing_args
+        and isinstance(plan, dict)
+    ):
+        try:
+            from app.services.intent_classifier import _extract_item, _extract_quantity, _extract_vendor
+
+            original_item = _extract_item(original_user_message)
+            original_quantity = _extract_quantity(original_user_message, default=1)
+            selected_vendor = _extract_vendor(merged_message)
+
+            for step in plan.get("steps", []):
+                if step.get("type") != "tool" or step.get("name") != "create_purchase_order":
+                    continue
+                args = step.setdefault("args", {})
+                if original_item and original_item != "item":
+                    args["item"] = original_item
+                if isinstance(original_quantity, int) and original_quantity > 0:
+                    args["quantity"] = original_quantity
+                if selected_vendor and selected_vendor != "default_vendor":
+                    args["vendor_name"] = selected_vendor
+        except Exception:
+            pass
 
     plan["intent_detection"] = {
         **merged_metadata,
@@ -199,7 +234,7 @@ def fallback_planner(user_message: str, chat_history: str = ""):
         "supplier", "restock", "reorder", "supply", "buy", "procure",
         "many", "left", "supplies", "who", "arishtam", "capsule", "dropper",
         "leave", "apply", "application", "reason", "day", "half", "full",
-        "arrived", "received", "delivered", "stock", "add", "increase",
+        "arrived", "received", "delivered", "stock", "add", "increase", "cancel", "void",
     ]
 
     for word in re.findall(r"\b\w+\b", user_msg):
@@ -236,10 +271,30 @@ def fallback_planner(user_message: str, chat_history: str = ""):
                 }],
             }
 
+    if words.intersection({"cancel", "void", "stop"}) and words.intersection({"po", "order"}):
+        po_match = re.search(r"(\d{6}-[A-Z0-9]+-\d{3})", user_msg, re.I)
+        po_id = po_match.group(1).upper() if po_match else None
+        if not po_id:
+            po_legacy = re.search(r"(?:po|order)\s*#?\s*([a-z0-9-]+)", user_msg, re.I)
+            po_id = po_legacy.group(1).upper() if po_legacy else None
+        if po_id:
+            reason_match = re.search(r"(?:because|due to|reason)\s*[:\-]?\s*(.+)$", user_msg, re.I)
+            args = {"po_id": po_id}
+            if reason_match:
+                args["cancellation_reason"] = reason_match.group(1).strip()
+            return {
+                "type": "action",
+                "steps": [{
+                    "type": "tool",
+                    "name": "cancel_purchase_order",
+                    "args": args,
+                }],
+            }
+
     if "if" in user_msg and ("less than" in user_msg or "<" in user_msg) and ("purchase" in user_msg or "order" in user_msg or "po" in user_msg):
         try:
             cond_match = re.search(r"(?:less than|<)\s*(\d+)", user_msg)
-            threshold = int(cond_match.group(1)) if cond_match else 10
+            threshold = int(cond_match.group(1)) if cond_match else 50
 
             po_qty_match = re.search(r"(?:purchase|order|po).*?(\d+)", msg)
             po_qty = int(po_qty_match.group(1)) if po_qty_match else 50
@@ -280,9 +335,26 @@ def fallback_planner(user_message: str, chat_history: str = ""):
     if "leave" in user_msg or "apply" in user_msg:
         reason = "No reason provided"
         if "reason" in user_msg:
-            reason_match = re.search(r"reason\s+(?:is|for)?\s*(.*?)(?:\s+on|\s+at|$)", user_msg)
+            reason_match = re.search(r"reason[\s:]+(?:is|for)?\s*(.*?)(?:\s+on|\s+at|$|,\s*)", user_msg)
             if reason_match:
                 reason = reason_match.group(1).strip()
+        if reason == "No reason provided":
+            cleaned_reason = re.sub(
+                r"\b(?:leave|apply|for|on|today|tomorrow|next|full|day|half|first|second|1st|2nd|request|submit|book|mark|put)\b",
+                " ",
+                user_msg,
+                flags=re.I,
+            )
+            cleaned_reason = re.sub(
+                r"\b(?:monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b",
+                " ",
+                cleaned_reason,
+                flags=re.I,
+            )
+            cleaned_reason = re.sub(r"[,._/-]", " ", cleaned_reason)
+            cleaned_reason = " ".join(cleaned_reason.split()).strip()
+            if len(cleaned_reason) > 2:
+                reason = cleaned_reason
 
         leave_type = "Full Day"
         if "half" in user_msg:
@@ -297,8 +369,26 @@ def fallback_planner(user_message: str, chat_history: str = ""):
         explicit_date = re.search(r"\b(\d{1,2}[/-]\d{1,2}[/-]\d{2,4})\b", user_msg)
         if explicit_date:
             date_str = explicit_date.group(1)
-        elif "tomorrow" in user_msg:
-            date_str = (datetime.now() + timedelta(days=1)).strftime("%Y-%m-%d")
+        else:
+            # Fallback to similar month/day search if present
+            month_match = re.search(
+                r"(?:(\d{1,2})(?:st|nd|rd|th)?\s+(?:of\s+)?)?"
+                r"(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*"
+                r"(?:\s+(\d{1,2})(?:st|nd|rd|th)?)?",
+                user_msg,
+                re.I,
+            )
+            if month_match and (month_match.group(1) or month_match.group(3)):
+                day = int(month_match.group(1) or month_match.group(3))
+                month_key = month_match.group(2).lower()[:3]
+                month_map = {
+                    "jan": 1, "feb": 2, "mar": 3, "apr": 4,
+                    "may": 5, "jun": 6, "jul": 7, "aug": 8,
+                    "sep": 9, "oct": 10, "nov": 11, "dec": 12,
+                }
+                date_str = f"{datetime.now().year}-{month_map[month_key]:02d}-{day:02d}"
+            elif "tomorrow" in user_msg:
+                date_str = (datetime.now() + timedelta(days=1)).strftime("%Y-%m-%d")
 
         return {
             "type": "action",
@@ -338,11 +428,55 @@ def fallback_planner(user_message: str, chat_history: str = ""):
                 }],
             }
 
-    if "inventory" in user_msg or "stock" in user_msg or "check" in user_msg or "have" in user_msg or "many" in user_msg or "left" in user_msg or "count" in user_msg:
+    if "low stock" in user_msg or "low items" in user_msg or "stock alert" in user_msg:
+        threshold_match = re.search(r"\b(?:below|under|less than)\s*(\d+)\b", user_msg, re.I)
+        threshold = int(threshold_match.group(1)) if threshold_match else 50
+        return {
+            "type": "action",
+            "steps": [{
+                "type": "tool",
+                "name": "get_low_stock_items",
+                "args": {"threshold": threshold},
+            }],
+        }
+
+    if "inventory" in user_msg or "stock" in user_msg or "check" in user_msg or "have" in user_msg or "many" in user_msg or "left" in user_msg or "count" in user_msg or "low items" in user_msg:
         item = extract_item_from_message(user_msg, msg)
         return {
             "type": "action",
             "steps": [{"type": "tool", "name": "get_inventory", "args": {"item": item}}],
+        }
+
+    if ("remove" in user_msg or "discard" in user_msg or "subtract" in user_msg or "expired" in user_msg or "damaged" in user_msg):
+        # Extract quantity — skip digits inside PO IDs
+        scrubbed_msg = re.sub(r"\b\d{6}-[A-Z0-9]+-\d{3}\b", " ", user_msg, flags=re.I)
+        scrubbed_msg = re.sub(r"(?:po|order)\s*#?\s*\d+", " ", scrubbed_msg, flags=re.I)
+        qty_match = re.search(r"\d+", scrubbed_msg)
+        quantity = int(qty_match.group()) if qty_match else 0
+
+        item = extract_item_from_message(user_msg, msg)
+        reason = "damaged" if "damaged" in user_msg or "broken" in user_msg else "expired"
+
+        if quantity > 0:
+            return {
+                "type": "action",
+                "steps": [{
+                    "type": "tool",
+                    "name": "remove_expired_stock",
+                    "args": {"item": item, "quantity": quantity, "reason": reason},
+                }],
+            }
+
+    if "leave" in user_msg and ("who" in user_msg or "today" in user_msg):
+        return {
+            "type": "action",
+            "steps": [{"type": "tool", "name": "get_leaves_today", "args": {}}],
+        }
+
+    if ("purchase" in user_msg or "order" in user_msg) and ("report" in user_msg or "today" in user_msg):
+        return {
+            "type": "action",
+            "steps": [{"type": "tool", "name": "generate_daily_purchase_report", "args": {}}],
         }
 
     return None
@@ -353,6 +487,19 @@ def extract_item_from_message(user_msg: str, full_msg: str, before_keyword: str 
         item_match = re.search(rf"(?:for|of)\s+([a-zA-Z0-9\s]+?)\s+{before_keyword}", full_msg)
         if item_match:
             return item_match.group(1).strip()
+
+    # Match "120 Neem tab is expired"
+    expired_match = re.search(r"\b\d+\s+([a-z0-9\s]+?)\s+(?:is|are)\s+(?:expired|damaged|broken|missing)", user_msg, re.I)
+    if expired_match:
+        return expired_match.group(1).strip()
+
+    # Match "remove 120 neem tab" or "discard 50 bottles"
+    remove_match = re.search(r"\b(?:remove|discard|subtract|delete)\s+(?:\d+\s+)?([a-z0-9\s]+?)(?:\s+(?:because|due to|as|since|which|that)|$)", user_msg, re.I)
+    if remove_match:
+        item = remove_match.group(1).strip()
+        item = re.sub(r"\b(?:is|are|expired|damaged)\b.*$", "", item, flags=re.I).strip()
+        if item and item.lower() not in ["them", "it", "the", "some", "more"]:
+            return item
 
     # Match "11 neem tab arrived" / "50 bottles received" — <quantity> <item> <arrival verb>
     arrival_match = re.search(r"\b\d+\s+([a-z][a-z0-9\s]+?)\s+(?:arrived|received|delivered|has\s+arrived|have\s+arrived)", user_msg, re.I)
@@ -410,18 +557,21 @@ def _attach_intent_metadata(plan, intent_metadata, source: str, elapsed_ms: floa
 
 
 def generate_plan(user_message: str, chat_history: str = ""):
+    start_time = time.time()
     continued_plan = _continue_clarification(user_message, chat_history)
     if continued_plan is not None:
         print("[Semantic] Completed prior clarification - skipping LLM.")
+        continued_plan.setdefault("intent_detection", {})["latency_ms"] = round((time.time() - start_time) * 1000, 2)
         return continued_plan
 
     router = get_agent_router(_legacy_keyword_logic, lambda text: text)
     router_plan = router.route_plan(user_message)
     if router_plan is not None:
         print("[Semantic Router] Resolved before LLM.")
+        router_plan.setdefault("intent_detection", {})["latency_ms"] = round((time.time() - start_time) * 1000, 2)
         return router_plan
 
-    elapsed_ms = 0.0
+    elapsed_ms = (time.time() - start_time) * 1000
     intent_metadata = {"reason": "unknown_intent"}
 
     print("[Semantic] No confident match - falling back to LLM.")
@@ -451,6 +601,10 @@ def generate_plan(user_message: str, chat_history: str = ""):
             if plan:
                 if "steps" in plan and "type" not in plan:
                     plan["type"] = "action"
+                if "steps" in plan and isinstance(plan["steps"], list):
+                    for step in plan["steps"]:
+                        if "type" not in step:
+                            step["type"] = "tool"
                 return _attach_intent_metadata(plan, intent_metadata, "llm", elapsed_ms)
 
             if attempt == 0:

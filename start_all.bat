@@ -4,9 +4,6 @@ echo   Starting ERP Agent - All Services
 echo ============================================
 echo.
 
-:: Start Ollama Llama3.2 model
-echo [1/3] Starting Llama3.2:3b via Ollama...
-start "Llama3.2" cmd /k "ollama run llama3.2:3b"
 
 :: Start FastAPI backend with Uvicorn
 echo [2/3] Starting Uvicorn backend...
@@ -21,7 +18,6 @@ echo ============================================
 echo   All services launched in separate windows!
 echo ============================================
 echo.
-echo   - Llama3.2: Running in "Llama3.2" window
 echo   - Backend:  Running in "Uvicorn Backend" window
 echo   - Frontend: Running in "Frontend Dev" window
 echo.

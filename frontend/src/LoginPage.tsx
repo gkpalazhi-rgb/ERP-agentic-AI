@@ -1,15 +1,27 @@
 import { useState } from 'react';
-import { Bot, Eye, EyeOff, LogIn, UserPlus, ArrowRight } from 'lucide-react';
+import { Eye, EyeOff, LogIn, UserPlus, ArrowRight } from 'lucide-react';
 
 interface LoginPageProps {
-  onLogin: (token: string, user: { user_id: number; username: string; role: string }) => void;
+  onLogin: (token: string, user: { user_id: number; username: string; role: string; feature_access?: string[] }) => void;
 }
+
+const FEATURE_OPTIONS = [
+  { key: 'chat', label: 'AI Chat' },
+  { key: 'dashboard', label: 'Dashboard' },
+  { key: 'inventory', label: 'Inventory' },
+  { key: 'purchase_orders', label: 'Purchase Orders' },
+  { key: 'vendors', label: 'Vendors' },
+  { key: 'leaves', label: 'Leaves' },
+] as const;
+
+const DEFAULT_REGISTER_FEATURES = ['chat', 'dashboard', 'inventory', 'vendors', 'leaves'];
 
 export default function LoginPage({ onLogin }: LoginPageProps) {
   const [isRegister, setIsRegister] = useState(false);
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [email, setEmail] = useState('');
+  const [selectedFeatures, setSelectedFeatures] = useState<string[]>(DEFAULT_REGISTER_FEATURES);
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
@@ -21,8 +33,9 @@ export default function LoginPage({ onLogin }: LoginPageProps) {
 
     try {
       const endpoint = isRegister ? '/auth/register' : '/auth/login';
-      const body: Record<string, string> = { username, password };
+      const body: Record<string, string | string[]> = { username, password };
       if (isRegister && email) body.email = email;
+      if (isRegister) body.feature_access = selectedFeatures;
 
       const res = await fetch(endpoint, {
         method: 'POST',
@@ -33,7 +46,12 @@ export default function LoginPage({ onLogin }: LoginPageProps) {
       const data = await res.json();
 
       if (!res.ok) {
-        setError(data.detail || 'Something went wrong');
+        const backendError =
+          data?.error?.message ||
+          data?.detail ||
+          data?.message ||
+          (typeof data?.error === 'string' ? data.error : '');
+        setError(backendError || 'Something went wrong');
         return;
       }
 
@@ -41,6 +59,7 @@ export default function LoginPage({ onLogin }: LoginPageProps) {
         user_id: data.user_id,
         username: data.username,
         role: data.role,
+        feature_access: Array.isArray(data.feature_access) ? data.feature_access : undefined,
       });
     } catch {
       setError('Unable to connect to server');
@@ -53,6 +72,15 @@ export default function LoginPage({ onLogin }: LoginPageProps) {
     setIsRegister(!isRegister);
     setError('');
     setEmail('');
+    setSelectedFeatures(DEFAULT_REGISTER_FEATURES);
+  };
+
+  const toggleFeature = (featureKey: string) => {
+    setSelectedFeatures((prev) => (
+      prev.includes(featureKey)
+        ? prev.filter((f) => f !== featureKey)
+        : [...prev, featureKey]
+    ));
   };
 
   return (
@@ -66,8 +94,8 @@ export default function LoginPage({ onLogin }: LoginPageProps) {
 
         {/* Logo & Brand */}
         <div className="relative z-10">
-          <div className="w-14 h-14 rounded-2xl bg-white/10 backdrop-blur-sm flex items-center justify-center mb-6 border border-white/10">
-            <Bot className="w-7 h-7 text-[#F5E6D3]" />
+          <div className="w-24 h-24 rounded-full bg-white shadow-2xl flex items-center justify-center mb-6 border-[3px] border-white/40 overflow-hidden">
+            <img src="/logo.png" alt="Thaikkattu Mooss Logo" className="w-full h-full object-contain p-1.5" />
           </div>
           <h1 className="text-3xl font-bold text-white tracking-tight">
             ERP AI
@@ -101,8 +129,8 @@ export default function LoginPage({ onLogin }: LoginPageProps) {
         <div className="w-full max-w-[420px]">
           {/* Mobile logo */}
           <div className="lg:hidden flex items-center gap-3 mb-10">
-            <div className="w-11 h-11 rounded-xl bg-[#4B2E2B] flex items-center justify-center">
-              <Bot className="w-5 h-5 text-white" />
+            <div className="w-12 h-12 rounded-full bg-white shadow-md border-2 border-white/60 flex items-center justify-center overflow-hidden">
+              <img src="/logo.png" alt="Company Logo" className="w-full h-full object-contain p-1" />
             </div>
             <div>
               <span className="text-lg font-bold text-[#4B2E2B]">ERP AI</span>
@@ -164,6 +192,37 @@ export default function LoginPage({ onLogin }: LoginPageProps) {
               </div>
             )}
 
+            {isRegister && (
+              <div className="animate-fadeIn">
+                <label className="block text-xs font-semibold text-[#6B5744] uppercase tracking-wider mb-2">
+                  Feature Access
+                </label>
+                <div className="grid grid-cols-2 gap-2">
+                  {FEATURE_OPTIONS.map((feature) => {
+                    const checked = selectedFeatures.includes(feature.key);
+                    return (
+                      <label
+                        key={feature.key}
+                        className={`flex items-center gap-2 px-3 py-2 rounded-lg border text-xs cursor-pointer transition-all ${
+                          checked
+                            ? 'bg-[#FDF2F2] border-[#B76A6A] text-[#6B2A2A]'
+                            : 'bg-white border-[#DDD0C0] text-[#6B5744] hover:bg-[#FAF0E1]'
+                        }`}
+                      >
+                        <input
+                          type="checkbox"
+                          checked={checked}
+                          onChange={() => toggleFeature(feature.key)}
+                          className="accent-[#8B2C2C]"
+                        />
+                        {feature.label}
+                      </label>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
             {/* Password */}
             <div>
               <label className="block text-xs font-semibold text-[#6B5744] uppercase tracking-wider mb-1.5">
@@ -193,7 +252,7 @@ export default function LoginPage({ onLogin }: LoginPageProps) {
             <button
               id="login-submit"
               type="submit"
-              disabled={loading || !username || !password}
+              disabled={loading || !username || !password || (isRegister && selectedFeatures.length === 0)}
               className="w-full mt-2 bg-gradient-to-r from-[#8B2C2C] to-[#A33535] hover:from-[#7A2626] hover:to-[#922F2F] text-white font-semibold py-3.5 rounded-xl transition-all duration-200 shadow-lg shadow-[#8B2C2C]/20 hover:shadow-xl hover:shadow-[#8B2C2C]/30 disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:shadow-lg flex items-center justify-center gap-2 text-sm"
             >
               {loading ? (
