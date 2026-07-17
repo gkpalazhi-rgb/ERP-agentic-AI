@@ -1,5 +1,6 @@
 # ERP-agentic-AI
 
+Collaborative project — forked from the original team repository.
 Custom ERP agent with semantic intent routing, multi-intent chains, role-based access control, and LLM fallback.
 
 ## Quick start
