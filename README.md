@@ -11,6 +11,9 @@ Custom ERP agent with semantic intent routing, multi-intent chains, role-based a
 3. Run API
    - `uvicorn app.main:app --reload`
 
+4. start it as a whole
+   - start_all.bat 
+
 ## Auth
 
 - Register: `POST /auth/register`
